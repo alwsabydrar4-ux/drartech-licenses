@@ -122,6 +122,60 @@ test('uses last_sync to omit unchanged records', async () => {
   }
 });
 
+test('rejects a role change from a non-owner actor', async () => {
+  const server = await startServer();
+  try {
+    await sync(server.port, {
+      device_id: 'device-auth-owner',
+      shop_id: 'shop-auth',
+      changes: {
+        users: [
+          {
+            id: 'auth-owner',
+            shopId: 'shop-auth',
+            name: 'المالك',
+            email: 'owner@auth.test',
+            role: 'owner',
+            status: 'active',
+          },
+          {
+            id: 'auth-sales',
+            shopId: 'shop-auth',
+            name: 'المبيعات',
+            email: 'sales@auth.test',
+            role: 'sales',
+            status: 'active',
+          },
+        ],
+      },
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        device_id: 'device-auth-sales',
+        shop_id: 'shop-auth',
+        user_id: 'auth-sales',
+        changes: {
+          users: [{
+            id: 'auth-sales',
+            shopId: 'shop-auth',
+            name: 'المبيعات',
+            email: 'sales@auth.test',
+            role: 'owner',
+            status: 'active',
+            updatedAt: '2026-09-09T12:00:00.000Z',
+          }],
+        },
+      }),
+    });
+    assert.equal(response.status, 403);
+  } finally {
+    await stopServer(server);
+  }
+});
+
 test('accepts sync requests under the public api v1 prefix', async () => {
   const server = await startServer();
   try {

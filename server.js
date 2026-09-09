@@ -171,6 +171,30 @@ function getRow(tableName, id) {
   });
 }
 
+function getUserById(id, shopId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      'SELECT id, shop_id, role FROM users WHERE id = ? AND shop_id = ?',
+      [id, shopId],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(row || null);
+      },
+    );
+  });
+}
+
+class AuthorizationError extends Error {}
+
+async function authorizeUserRoleChange(incoming, existing, shopId, userId) {
+  if (!existing || incoming.role === existing.role) return;
+  const actorId = incoming.updatedBy || incoming.updated_by || incoming.user_id || userId;
+  const actor = await getUserById(actorId, shopId);
+  if (!actor || actor.role !== 'owner') {
+    throw new AuthorizationError('لا تملك صلاحية تغيير أدوار المستخدمين');
+  }
+}
+
 function conflictPayload(tableName, incoming, existing, resolution) {
   return {
     table: tableName,
@@ -212,6 +236,9 @@ function upsertTable(tableName, records, deviceId, shopId, userId) {
   return Promise.all(records.map((record) => {
     const item = normalizeTableRecord(tableName, record, deviceId, shopId, userId);
     return getRow(tableName, item.id).then(async (existing) => {
+      if (tableName === 'users') {
+        await authorizeUserRoleChange(item, existing, shopId, userId);
+      }
       if (existing && existing.device_id !== item.device_id) {
         const incomingTime = Date.parse(item.updatedAt || item.createdAt || '') || 0;
         const existingTime = Date.parse(existing.updatedAt || existing.createdAt || '') || 0;
@@ -814,7 +841,8 @@ app.post('/sync', requireSyncAuthorization, async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error('خطأ في مزامنة السحابة:', error);
-    res.status(500).json({ success: false, error: error.message });
+    const status = error instanceof AuthorizationError ? 403 : 500;
+    res.status(status).json({ success: false, error: error.message });
   }
 });
 

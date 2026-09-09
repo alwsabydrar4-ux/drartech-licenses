@@ -14,6 +14,14 @@ const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// The public API is deployed under /api/v1, while local installs still use root routes.
+app.use((req, res, next) => {
+  if (req.url === '/api/v1' || req.url.startsWith('/api/v1/')) {
+    req.url = req.url.slice('/api/v1'.length) || '/';
+  }
+  next();
+});
+
 function secureKeyEquals(receivedKey, expectedKey) {
   if (!receivedKey || !expectedKey) return false;
   const received = Buffer.from(receivedKey);
@@ -289,6 +297,13 @@ function createSchema() {
       activated_at DATETIME
     )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS trial_devices (
+      device_id TEXT PRIMARY KEY,
+      started_at DATETIME NOT NULL,
+      expires_at DATETIME NOT NULL,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+
     for (const column of [
       ['client_name', 'TEXT'],
       ['notes', 'TEXT'],
@@ -541,6 +556,38 @@ app.get('/users/resolve', requireSyncAuthorization, (req, res) => {
         role: row.role,
         status: row.status,
       });
+    },
+  );
+});
+
+app.get('/shops/:shopId/users', requireSyncAuthorization, (req, res) => {
+  const shopId = String(req.params.shopId || '').trim();
+  if (!shopId) return res.status(400).json({ error: 'shopId مطلوب' });
+  db.all(
+    `SELECT id, shop_id, user_code, email, name, role, status, createdAt, updatedAt
+       FROM users WHERE shop_id = ? ORDER BY name COLLATE NOCASE`,
+    [shopId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ users: (rows || []).map((row) => serializeRow(row)) });
+    },
+  );
+});
+
+app.get('/shops/:shopId/users/by-code/:userCode', requireSyncAuthorization, (req, res) => {
+  const shopId = String(req.params.shopId || '').trim();
+  const userCode = String(req.params.userCode || '').trim();
+  if (!shopId || !/^\d{8}$/.test(userCode)) {
+    return res.status(400).json({ error: 'بيانات المستخدم غير صحيحة' });
+  }
+  db.get(
+    `SELECT id, shop_id, user_code, email, name, role, status, createdAt, updatedAt
+       FROM users WHERE shop_id = ? AND user_code = ? LIMIT 1`,
+    [shopId, userCode],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: 'حساب المستخدم غير موجود' });
+      res.json(serializeRow(row));
     },
   );
 });
@@ -808,4 +855,52 @@ createSchema();
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 سيرفر Smart Accountant يعمل على المنفذ: ${PORT}`);
   console.log(`📁 قاعدة البيانات: ${dbPath}`);
+});
+
+app.post('/trial/register', requireSyncAuthorization, (req, res) => {
+  const deviceId = String(req.body?.device_id || '').trim();
+  if (!deviceId || deviceId === 'UNKNOWN-DEVICE') {
+    return res.status(400).json({ error: 'معرف جهاز صالح مطلوب' });
+  }
+
+  db.get(
+    'SELECT device_id, started_at, expires_at FROM trial_devices WHERE device_id = ? LIMIT 1',
+    [deviceId],
+    (findError, existing) => {
+      if (findError) return res.status(500).json({ error: findError.message });
+      if (existing) {
+        return res.json({
+          deviceId: existing.device_id,
+          trialStart: existing.started_at,
+          trialEnd: existing.expires_at,
+          isNew: false,
+        });
+      }
+
+      const startedAt = new Date();
+      const expiresAt = new Date(startedAt.getTime() + 10 * 24 * 60 * 60 * 1000);
+      db.run(
+        'INSERT OR IGNORE INTO trial_devices (device_id, started_at, expires_at) VALUES (?, ?, ?)',
+        [deviceId, startedAt.toISOString(), expiresAt.toISOString()],
+        (insertError) => {
+          if (insertError) return res.status(500).json({ error: insertError.message });
+          db.get(
+            'SELECT device_id, started_at, expires_at FROM trial_devices WHERE device_id = ? LIMIT 1',
+            [deviceId],
+            (readError, saved) => {
+              if (readError || !saved) {
+                return res.status(500).json({ error: readError?.message || 'تعذر حفظ التجربة' });
+              }
+              res.json({
+                deviceId: saved.device_id,
+                trialStart: saved.started_at,
+                trialEnd: saved.expires_at,
+                isNew: saved.started_at === startedAt.toISOString(),
+              });
+            },
+          );
+        },
+      );
+    },
+  );
 });

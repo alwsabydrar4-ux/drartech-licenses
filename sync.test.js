@@ -41,8 +41,8 @@ async function stopServer(server) {
   await rm(server.directory, { recursive: true, force: true });
 }
 
-async function sync(port, payload) {
-  const response = await fetch(`http://127.0.0.1:${port}/sync`, {
+async function sync(port, payload, apiPrefix = '') {
+  const response = await fetch(`http://127.0.0.1:${port}${apiPrefix}/sync`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -117,6 +117,45 @@ test('uses last_sync to omit unchanged records', async () => {
       changes: {},
     });
     assert.equal(second.data.users.length, 0);
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('accepts sync requests under the public api v1 prefix', async () => {
+  const server = await startServer();
+  try {
+    const result = await sync(server.port, {
+      device_id: 'device-api-v1',
+      shop_id: 'shop-api-v1',
+      changes: {},
+    }, '/api/v1');
+    assert.equal(result.success, true);
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('does not reset a device trial on repeated registration', async () => {
+  const server = await startServer();
+  try {
+    const first = await fetch(`http://127.0.0.1:${server.port}/trial/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ device_id: 'trial-device-1' }),
+    });
+    const firstData = await first.json();
+    const second = await fetch(`http://127.0.0.1:${server.port}/trial/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ device_id: 'trial-device-1' }),
+    });
+    const secondData = await second.json();
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(firstData.trialStart, secondData.trialStart);
+    assert.equal(firstData.trialEnd, secondData.trialEnd);
   } finally {
     await stopServer(server);
   }

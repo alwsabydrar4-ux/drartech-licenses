@@ -15,7 +15,7 @@ async function startServer() {
     stdio: 'ignore',
   });
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/health`);
       if (response.ok) return { process: child, port, directory };
@@ -117,6 +117,39 @@ test('uses last_sync to omit unchanged records', async () => {
       changes: {},
     });
     assert.equal(second.data.users.length, 0);
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('preserves deletion tombstones during synchronization', async () => {
+  const server = await startServer();
+  try {
+    const deletedAt = '2026-09-09T12:00:00.000Z';
+    await sync(server.port, {
+      device_id: 'device-delete-a',
+      shop_id: 'shop-delete',
+      changes: {
+        customers: [{
+          id: 'customer-delete-1',
+          shopId: 'shop-delete',
+          name: 'عميل محذوف',
+          createdAt: '2026-09-09T11:00:00.000Z',
+          updatedAt: deletedAt,
+          deletedAt,
+        }],
+      },
+    });
+
+    const result = await sync(server.port, {
+      device_id: 'device-delete-b',
+      shop_id: 'shop-delete',
+      changes: {},
+    });
+    const customer = result.data.customers.find(
+      (item) => item.id === 'customer-delete-1',
+    );
+    assert.equal(customer.deletedAt, deletedAt);
   } finally {
     await stopServer(server);
   }

@@ -133,7 +133,7 @@ function ensureSyncMetadata(record, deviceId, shopId, userId) {
 }
 
 const tableColumns = {
-  shops: ['id', 'shop_code', 'name', 'owner_id', 'currency', 'country', 'createdAt', 'updatedAt', 'device_id', 'shop_id', 'user_id'],
+  shops: ['id', 'shop_code', 'name', 'owner_id', 'owner_name', 'phone', 'currency', 'country', 'createdAt', 'updatedAt', 'device_id', 'shop_id', 'user_id'],
   users: ['id', 'shop_id', 'user_code', 'email', 'name', 'role', 'status', 'createdAt', 'updatedAt', 'device_id', 'user_id'],
   audit_logs: ['id', 'device_id', 'shop_id', 'user_id', 'entity', 'entity_id', 'action', 'details', 'createdAt'],
 };
@@ -146,7 +146,10 @@ function normalizeTableRecord(tableName, record, deviceId, shopId, userId) {
   }
   if (tableName === 'shops') {
     item.shop_code = item.shop_code || item.shopCode || null;
+    item.owner_name = item.owner_name || item.ownerName || null;
+    item.phone = item.phone || null;
     delete item.shopCode;
+    delete item.ownerName;
   }
   if (tableName === 'users') {
     item.status = item.status || 'active';
@@ -156,7 +159,6 @@ function normalizeTableRecord(tableName, record, deviceId, shopId, userId) {
   delete item.entityId;
   delete item.syncStatus;
   delete item.serverId;
-  delete item.deletedAt;
   const allowed = tableColumns[tableName];
   if (!allowed) return item;
   return Object.fromEntries(Object.entries(item).filter(([key]) => allowed.includes(key)));
@@ -346,6 +348,8 @@ function createSchema() {
       shop_code TEXT,
       name TEXT,
       owner_id TEXT,
+      owner_name TEXT,
+      phone TEXT,
       currency TEXT DEFAULT 'SAR',
       country TEXT DEFAULT 'SA',
       createdAt DATETIME,
@@ -355,6 +359,8 @@ function createSchema() {
       user_id TEXT
     )`);
     db.run(`ALTER TABLE shops ADD COLUMN shop_code TEXT`, () => {});
+    db.run(`ALTER TABLE shops ADD COLUMN owner_name TEXT`, () => {});
+    db.run(`ALTER TABLE shops ADD COLUMN phone TEXT`, () => {});
 
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -929,6 +935,38 @@ app.post('/trial/register', requireSyncAuthorization, (req, res) => {
           );
         },
       );
+    },
+  );
+});
+
+app.get('/shops/resolve-identity', requireSyncAuthorization, (req, res) => {
+  const name = String(req.query.name || '').trim();
+  const ownerName = String(req.query.owner_name || '').trim();
+  const phone = String(req.query.phone || '').trim();
+  if (!name || !ownerName || !phone) {
+    return res.status(400).json({ error: 'اسم المحل واسم المالك والهاتف مطلوبة' });
+  }
+  db.get(
+    `SELECT id, shop_code, name, owner_name, phone, currency, country
+       FROM shops
+      WHERE lower(trim(name)) = lower(trim(?))
+        AND lower(trim(owner_name)) = lower(trim(?))
+        AND trim(phone) = trim(?)
+      ORDER BY updatedAt DESC
+      LIMIT 1`,
+    [name, ownerName, phone],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: 'المحل غير موجود' });
+      res.json({
+        shopId: row.id,
+        shopCode: row.shop_code,
+        shopName: row.name,
+        ownerName: row.owner_name,
+        phone: row.phone,
+        currency: row.currency,
+        country: row.country,
+      });
     },
   );
 });

@@ -223,6 +223,86 @@ test('accepts sync requests under the public api v1 prefix', async () => {
   }
 });
 
+test('ignores retried sync payloads with the same client_tx_id', async () => {
+  const server = await startServer();
+  try {
+    const payload = {
+      device_id: 'device-tx-id',
+      shop_id: 'shop-tx-id',
+      changes: {
+        customers: [{
+          id: 'customer-tx-1',
+          shopId: 'shop-tx-id',
+          client_tx_id: 'tx-duplicate-1',
+          name: 'عميل مكرر',
+          createdAt: '2026-09-10T09:00:00.000Z',
+          updatedAt: '2026-09-10T09:00:00.000Z',
+        }],
+      },
+    };
+
+    const first = await sync(server.port, payload);
+    const second = await sync(server.port, payload);
+
+    assert.equal(first.success, true);
+    assert.equal(second.success, true);
+    assert.equal(second.data.customers.filter((item) => item.id === 'customer-tx-1').length, 1);
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('exports the complete shop snapshot for first owner bootstrap', async () => {
+  const server = await startServer();
+  try {
+    const shopId = 'shop-bootstrap-1';
+    await sync(server.port, {
+      device_id: 'device-bootstrap',
+      shop_id: shopId,
+      changes: {
+        shops: [{
+          id: shopId,
+          shopCode: '123456',
+          name: 'متجر تجريبي',
+          ownerName: 'المالك',
+          phone: '0500000000',
+          createdAt: '2026-09-09T08:00:00.000Z',
+          updatedAt: '2026-09-09T08:00:00.000Z',
+        }],
+        users: [{
+          id: 'owner-bootstrap-1',
+          shopId,
+          userCode: '12345678',
+          email: 'owner@bootstrap.test',
+          name: 'المالك',
+          role: 'owner',
+          status: 'active',
+          createdAt: '2026-09-09T08:00:00.000Z',
+          updatedAt: '2026-09-09T08:00:00.000Z',
+        }],
+        customers: [{
+          id: 'customer-bootstrap-1',
+          shopId,
+          name: 'عميل تجريبي',
+          createdAt: '2026-09-09T08:01:00.000Z',
+          updatedAt: '2026-09-09T08:01:00.000Z',
+        }],
+      },
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/shops/${shopId}/bootstrap`);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(payload.shop.id, shopId);
+    assert.equal(payload.users.length, 1);
+    assert.equal(payload.customers.length, 1);
+    assert.equal(payload.shop.ownerName, 'المالك');
+  } finally {
+    await stopServer(server);
+  }
+});
+
 test('does not reset a device trial on repeated registration', async () => {
   const server = await startServer();
   try {

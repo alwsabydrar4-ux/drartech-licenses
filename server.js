@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -87,6 +88,43 @@ function requireAdminAuthorization(req, res, next) {
   return next();
 }
 
+function generateSessionToken() {
+  return `sess_${crypto.randomBytes(32).toString('hex')}`;
+}
+
+function hashPin(pin, salt) {
+  return crypto.createHash('sha256').update(`${salt}:${pin}`).digest('hex');
+}
+
+function requireAuth(req, res, next) {
+  const token = req.get('x-auth-token');
+  if (!token) {
+    return res.status(401).json({ error: 'جلسة المستخدم غير مسجلة' });
+  }
+
+  db.get(
+    `SELECT * FROM auth_sessions WHERE token = ? AND revokedAt IS NULL AND expiresAt > ? LIMIT 1`,
+    [token, new Date().toISOString()],
+    (err, session) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!session) return res.status(401).json({ error: 'انتهت صلاحية الجلسة أو تم إبطالها' });
+
+      const requestDeviceId = req.get('x-device-id') || req.body?.device_id || null;
+      if (requestDeviceId && session.device_id !== requestDeviceId) {
+        return res.status(403).json({ error: 'الجهاز غير مصرح له بهذه الجلسة' });
+      }
+
+      req.user = {
+        id: session.user_id,
+        shopId: session.shop_id,
+        role: session.role,
+        deviceId: session.device_id,
+      };
+      return next();
+    },
+  );
+}
+
 const dbDir = process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : './data';
 const dbPath = process.env.DB_PATH || path.join(dbDir, 'smart_accountant.db');
 
@@ -115,6 +153,14 @@ function serializeRow(row = {}) {
   if (copy.shop_id !== undefined) {
     copy.shopId = copy.shop_id;
     delete copy.shop_id;
+  }
+  if (copy.shop_code !== undefined) {
+    copy.shopCode = copy.shop_code;
+    delete copy.shop_code;
+  }
+  if (copy.owner_name !== undefined) {
+    copy.ownerName = copy.owner_name;
+    delete copy.owner_name;
   }
   if (copy.user_id !== undefined) {
     copy.userId = copy.user_id;
@@ -189,6 +235,8 @@ function normalizeTableRecord(tableName, record, deviceId, shopId, userId) {
   delete item.entityId;
   delete item.syncStatus;
   delete item.serverId;
+  delete item.client_tx_id;
+  delete item.clientTxId;
   const allowed = tableColumns[tableName];
   if (!allowed) return item;
   return Object.fromEntries(Object.entries(item).filter(([key]) => allowed.includes(key)));
@@ -200,6 +248,25 @@ function getRow(tableName, id) {
       if (err) return reject(err);
       resolve(row || null);
     });
+  });
+}
+
+function markProcessedClientTx(clientTxId, shopId, tableName) {
+  if (!clientTxId) return Promise.resolve(false);
+  return new Promise((resolve, reject) => {
+    db.get(
+      'SELECT 1 FROM processed_client_txns WHERE client_tx_id = ? LIMIT 1',
+      [clientTxId],
+      (selectErr, existing) => {
+        if (selectErr) return reject(selectErr);
+        if (existing) return resolve(true);
+        db.run(
+          'INSERT INTO processed_client_txns (client_tx_id, shop_id, table_name, createdAt) VALUES (?, ?, ?, ?)',
+          [clientTxId, shopId || null, tableName, new Date().toISOString()],
+          (insertErr) => (insertErr ? reject(insertErr) : resolve(false)),
+        );
+      },
+    );
   });
 }
 
@@ -265,8 +332,16 @@ function upsertConflict(conflict) {
 function upsertTable(tableName, records, deviceId, shopId, userId) {
   if (!Array.isArray(records)) return Promise.resolve([]);
 
-  return Promise.all(records.map((record) => {
+  return Promise.all(records.map(async (record) => {
     const item = normalizeTableRecord(tableName, record, deviceId, shopId, userId);
+    const clientTxId = item.client_tx_id || item.clientTxId || null;
+    if (clientTxId) {
+      const duplicate = await markProcessedClientTx(clientTxId, shopId, tableName);
+      if (duplicate) {
+        return null;
+      }
+    }
+
     return getRow(tableName, item.id).then(async (existing) => {
       if (tableName === 'users') {
         await authorizeUserRoleChange(item, existing, shopId, userId);
@@ -325,12 +400,34 @@ function fetchTable(tableName, shopId, deviceId, lastSync) {
     }
 
     if (lastSync) {
-      const changedSince = tableName === 'audit_logs'
-        ? 'createdAt > ?'
-        : '(updatedAt > ? OR createdAt > ?)';
+      let changedSince = '(updatedAt > ? OR createdAt > ?)';
+      if (tableName === 'audit_logs') {
+        changedSince = 'createdAt > ?';
+      } else if ([
+        'customers',
+        'suppliers',
+        'products',
+        'invoices',
+        'expenses',
+        'vouchers',
+      ].includes(tableName)) {
+        changedSince = '(updatedAt > ? OR createdAt > ? OR deletedAt > ?)';
+      }
       query += query.includes(' WHERE ') ? ` AND ${changedSince}` : ` WHERE ${changedSince}`;
-      params.push(lastSync);
-      if (tableName !== 'audit_logs') params.push(lastSync);
+      if (tableName === 'audit_logs') {
+        params.push(lastSync);
+      } else if ([
+        'customers',
+        'suppliers',
+        'products',
+        'invoices',
+        'expenses',
+        'vouchers',
+      ].includes(tableName)) {
+        params.push(lastSync, lastSync, lastSync);
+      } else {
+        params.push(lastSync, lastSync);
+      }
     }
 
     db.all(query, params, (err, rows) => {
@@ -403,9 +500,35 @@ function createSchema() {
       createdAt DATETIME,
       updatedAt DATETIME,
       device_id TEXT,
-      user_id TEXT
+      user_id TEXT,
+      pin_salt TEXT,
+      pin_hash TEXT
     )`);
     db.run(`ALTER TABLE users ADD COLUMN user_code TEXT`, () => {});
+    db.run(`ALTER TABLE users ADD COLUMN pin_salt TEXT`, () => {});
+    db.run(`ALTER TABLE users ADD COLUMN pin_hash TEXT`, () => {});
+
+    db.run(`CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      token TEXT UNIQUE NOT NULL,
+      user_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      createdAt DATETIME NOT NULL,
+      expiresAt DATETIME NOT NULL,
+      revokedAt DATETIME
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS user_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      last_seen DATETIME,
+      createdAt DATETIME NOT NULL,
+      UNIQUE(user_id, device_id)
+    )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS roles (
       id TEXT PRIMARY KEY,
@@ -559,6 +682,13 @@ function createSchema() {
       resolution TEXT NOT NULL,
       createdAt DATETIME NOT NULL
     )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS processed_client_txns (
+      client_tx_id TEXT PRIMARY KEY,
+      shop_id TEXT,
+      table_name TEXT,
+      createdAt DATETIME NOT NULL
+    )`);
   });
 }
 
@@ -655,6 +785,104 @@ app.get('/shops/:shopId/users/by-code/:userCode', requireSyncAuthorization, (req
   );
 });
 
+app.get('/shops/:shopId/sync', requireSyncAuthorization, async (req, res) => {
+  const shopId = String(req.params.shopId || '').trim();
+  const since = String(req.query.since || '').trim();
+
+  if (!shopId) {
+    return res.status(400).json({ error: 'shopId مطلوب' });
+  }
+
+  try {
+    const tablesToSync = [
+      'customers',
+      'suppliers',
+      'products',
+      'invoices',
+      'expenses',
+      'vouchers',
+      'shops',
+      'users',
+      'roles',
+      'audit_logs',
+    ];
+
+    const data = {};
+    for (const tableName of tablesToSync) {
+      data[tableName] = await fetchTable(tableName, shopId, null, since);
+    }
+
+    res.json({
+      success: true,
+      server_time: new Date().toISOString(),
+      since: since || null,
+      data,
+    });
+  } catch (error) {
+    console.error('delta sync failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/shops/:shopId/bootstrap', requireSyncAuthorization, async (req, res) => {
+  const shopId = String(req.params.shopId || '').trim();
+  if (!shopId) {
+    return res.status(400).json({ error: 'shopId مطلوب' });
+  }
+
+  try {
+    const [shop, users, customers, suppliers, products, invoices, expenses, vouchers, roles, auditLogs] = await Promise.all([
+      new Promise((resolve, reject) => {
+        db.get('SELECT * FROM shops WHERE id = ? LIMIT 1', [shopId], (err, row) => err ? reject(err) : resolve(row ? serializeRow(row) : null));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM users WHERE shop_id = ? ORDER BY name COLLATE NOCASE', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM customers WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM suppliers WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM products WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM invoices WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM expenses WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM vouchers WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM roles WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM audit_logs WHERE shop_id = ? ORDER BY createdAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      shop,
+      users,
+      customers,
+      suppliers,
+      products,
+      invoices,
+      expenses,
+      vouchers,
+      roles,
+      audit_logs: auditLogs,
+    });
+  } catch (error) {
+    console.error('bootstrap failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
@@ -666,6 +894,105 @@ app.get('/', (req, res) => {
 
 app.get('/admin-check', requireAdminAuthorization, (req, res) => {
   res.json({ success: true, admin: true });
+});
+
+app.post('/auth/login', requireSyncAuthorization, (req, res) => {
+  const { shop_id, user_code, email, device_id, pin } = req.body || {};
+  const normalizedShopId = String(shop_id || '').trim();
+  const normalizedUserCode = String(user_code || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedDeviceId = String(device_id || '').trim();
+
+  if (!normalizedShopId || !normalizedUserCode || !normalizedEmail || !normalizedDeviceId) {
+    return res.status(400).json({ success: false, error: 'shop_id و user_code و email و device_id مطلوبة' });
+  }
+
+  db.get(
+    `SELECT * FROM users WHERE shop_id = ? AND user_code = ? LIMIT 1`,
+    [normalizedShopId, normalizedUserCode],
+    (err, user) => {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+      if (!user) return res.status(401).json({ success: false, error: 'بيانات الدخول غير صحيحة' });
+      if ((user.email || '').trim().toLowerCase() !== normalizedEmail) {
+        return res.status(401).json({ success: false, error: 'البريد الإلكتروني غير مطابق' });
+      }
+      if (user.status && user.status !== 'active') {
+        return res.status(403).json({ success: false, error: 'هذا الحساب غير نشط' });
+      }
+
+      if (user.pin_hash && user.pin_salt) {
+        if (!pin || !String(pin).trim()) {
+          return res.status(400).json({ success: false, error: 'PIN مطلوب لهذا الحساب' });
+        }
+        const expectedHash = hashPin(String(pin).trim(), user.pin_salt);
+        if (expectedHash !== user.pin_hash) {
+          return res.status(401).json({ success: false, error: 'PIN غير صحيح' });
+        }
+      }
+
+      const token = generateSessionToken();
+      const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+      const sessionId = uuidv4();
+
+      db.run(
+        `INSERT INTO auth_sessions (id, token, user_id, shop_id, device_id, role, createdAt, expiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [sessionId, token, user.id, user.shop_id, normalizedDeviceId, user.role, new Date().toISOString(), expiresAt],
+        (sessionErr) => {
+          if (sessionErr) return res.status(500).json({ success: false, error: sessionErr.message });
+
+          db.run(
+            `INSERT OR REPLACE INTO user_devices (id, user_id, device_id, shop_id, last_seen, createdAt)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [uuidv4(), user.id, normalizedDeviceId, normalizedShopId, new Date().toISOString(), new Date().toISOString()],
+            (deviceErr) => {
+              if (deviceErr) {
+                console.error('device bind failed:', deviceErr.message);
+              }
+
+              res.json({
+                success: true,
+                token,
+                expiresAt,
+                user: {
+                  id: user.id,
+                  shopId: user.shop_id,
+                  userCode: user.user_code,
+                  email: user.email,
+                  name: user.name,
+                  role: user.role,
+                  status: user.status || 'active',
+                },
+              });
+            },
+          );
+        },
+      );
+    },
+  );
+});
+
+app.get('/auth/me', requireAuth, (req, res) => {
+  res.json({
+    success: true,
+    user: {
+      id: req.user.id,
+      shopId: req.user.shopId,
+      role: req.user.role,
+      deviceId: req.user.deviceId,
+    },
+  });
+});
+
+app.post('/auth/logout', requireAuth, (req, res) => {
+  db.run(
+    `UPDATE auth_sessions SET revokedAt = ? WHERE token = ?`,
+    [new Date().toISOString(), req.get('x-auth-token')],
+    (err) => {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+      res.json({ success: true });
+    },
+  );
 });
 
 app.get('/stats', requireAdminAuthorization, (req, res) => {

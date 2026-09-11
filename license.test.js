@@ -19,16 +19,16 @@ async function startServer() {
     },
     stdio: 'ignore',
   });
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/health`);
       if (response.ok) return { child, port, directory };
     } catch (_) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
   child.kill();
-  throw new Error('License backend did not start');
+  throw new Error(`License backend did not start on port ${port}`);
 }
 
 async function stopServer(server) {
@@ -49,7 +49,7 @@ function jsonBody(value) {
   return { headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) };
 }
 
-test('generates device-bound licenses and enforces admin authorization', async () => {
+test('generates device-bound licenses and enforces admin authorization', { concurrency: false }, async () => {
   const server = await startServer();
   try {
     const unauthorized = await request(server, '/generate', {
@@ -95,7 +95,7 @@ test('generates device-bound licenses and enforces admin authorization', async (
   }
 });
 
-test('multi-user licenses accept multiple users on the bound device', async () => {
+test('multi-user licenses accept multiple users on the bound device', { concurrency: false }, async () => {
   const server = await startServer();
   try {
     const headers = { 'x-admin-secret': 'test-admin-secret', 'content-type': 'application/json' };

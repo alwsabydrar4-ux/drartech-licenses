@@ -10,9 +10,39 @@ const PORT = process.env.PORT || 3000;
 const SYNC_API_KEY = process.env.SYNC_API_KEY || '';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const requestBuckets = new Map();
 
-app.use(cors());
+app.use(cors({
+  origin(origin, callback) {
+    if (!IS_PRODUCTION || !origin || ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origin غير مسموح به'));
+  },
+}));
 app.use(express.json({ limit: '10mb' }));
+
+function productionRateLimit(req, res, next) {
+  if (!IS_PRODUCTION) return next();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const bucket = requestBuckets.get(key);
+  if (!bucket || now - bucket.startedAt >= 60_000) {
+    requestBuckets.set(key, { startedAt: now, count: 1 });
+    return next();
+  }
+  bucket.count += 1;
+  if (bucket.count > 120) {
+    return res.status(429).json({ error: 'طلبات كثيرة، حاول بعد دقيقة' });
+  }
+  return next();
+}
+
+app.use(productionRateLimit);
 
 // The public API is deployed under /api/v1, while local installs still use root routes.
 app.use((req, res, next) => {

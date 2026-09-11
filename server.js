@@ -1,5 +1,6 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
 const path = require('path');
@@ -8,6 +9,7 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
 const SYNC_API_KEY = process.env.SYNC_API_KEY || '';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -16,6 +18,120 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 const requestBuckets = new Map();
+
+function toPostgresQuery(query, params = []) {
+  const values = Array.isArray(params) ? [...params] : [];
+  let text = query;
+  let index = 1;
+
+  text = text.replace(/INSERT\s+OR\s+REPLACE\s+INTO\s+([A-Za-z0-9_"`]+)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/gi, (_, table, columns, placeholderList) => {
+    const normalizedColumns = columns.trim();
+    const valuesList = placeholderList.trim();
+    return `INSERT INTO ${table} (${normalizedColumns}) VALUES (${valuesList}) ON CONFLICT (id) DO UPDATE SET ${normalizedColumns.split(',').map((column) => `${column.trim()} = EXCLUDED.${column.trim()}`).join(', ')}`;
+  });
+
+  text = text.replace(/INSERT\s+OR\s+IGNORE\s+INTO\s+([A-Za-z0-9_"`]+)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/gi, (_, table, columns, placeholderList) => {
+    return `INSERT INTO ${table} (${columns.trim()}) VALUES (${placeholderList.trim()}) ON CONFLICT DO NOTHING`;
+  });
+
+  text = text.replace(/\?/g, () => `$${index++}`);
+  return { text, values };
+}
+
+function createPostgresDbAdapter() {
+  const pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_URL ? { rejectUnauthorized: false } : undefined,
+  });
+
+  const exec = (method, query, params, callback) => {
+    const { text, values } = toPostgresQuery(query, params);
+    pool.query(text, values)
+      .then((result) => {
+        if (callback) {
+          const context = { lastID: null, changes: result.rowCount || 0 };
+          if (Array.isArray(result.rows) && result.rows.length > 0 && result.rows[0]?.id) {
+            context.lastID = result.rows[0].id;
+          }
+          callback.call(context, null, method === 'get' ? result.rows[0] || null : method === 'all' ? result.rows : result);
+        }
+      })
+      .catch((err) => {
+        if (callback) callback(err, null);
+      });
+  };
+
+  return {
+    get(query, params, callback) {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      exec('get', query, params || [], callback);
+    },
+    all(query, params, callback) {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      exec('all', query, params || [], callback);
+    },
+    run(query, params, callback) {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      exec('run', query, params || [], callback);
+    },
+    serialize(callback) {
+      if (typeof callback === 'function') callback();
+    },
+    async close() {
+      await pool.end();
+    },
+  };
+}
+
+function createSqliteDbAdapter() {
+  const sqliteDb = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+      console.error('خطأ في الاتصال بقاعدة البيانات:', err.message);
+    } else {
+      console.log(`تم الاتصال بقاعدة بيانات SQLite بنجاح: ${dbPath}`);
+    }
+  });
+  return {
+    get(query, params, callback) {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      sqliteDb.get(query, params || [], callback || (() => {}));
+    },
+    all(query, params, callback) {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      sqliteDb.all(query, params || [], callback || (() => {}));
+    },
+    run(query, params, callback) {
+      if (typeof params === 'function') {
+        callback = params;
+        params = [];
+      }
+      sqliteDb.run(query, params || [], callback || (() => {}));
+    },
+    serialize(callback) {
+      sqliteDb.serialize(callback);
+    },
+    close() {
+      return new Promise((resolve, reject) => sqliteDb.close((err) => err ? reject(err) : resolve()));
+    },
+  };
+}
+
+const dbMode = DATABASE_URL ? 'postgres' : 'sqlite';
 
 app.use(cors({
   origin(origin, callback) {
@@ -132,13 +248,28 @@ if (!fs.existsSync(dbDir) && dbDir !== '.' && dbDir !== './') {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('خطأ في الاتصال بقاعدة البيانات:', err.message);
-  } else {
-    console.log(`تم الاتصال بقاعدة بيانات SQLite بنجاح: ${dbPath}`);
-  }
-});
+const db = DATABASE_URL ? createPostgresDbAdapter() : createSqliteDbAdapter();
+
+function dbGet(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(query, params, (err, row) => err ? reject(err) : resolve(row || null));
+  });
+}
+
+function dbAll(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(query, params, (err, rows) => err ? reject(err) : resolve(rows || []));
+  });
+}
+
+function dbRun(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(query, params, function (err) {
+      if (err) return reject(err);
+      resolve({ lastID: this?.lastID ?? null, changes: this?.changes ?? 0 });
+    });
+  });
+}
 
 function normalizeJsonValue(value) {
   if (value === undefined) return null;
@@ -437,7 +568,7 @@ function fetchTable(tableName, shopId, deviceId, lastSync) {
   });
 }
 
-function createSchema() {
+function createSchemaSqlite() {
   db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS licenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -621,9 +752,9 @@ function createSchema() {
       device_id TEXT,
       shop_id TEXT,
       user_id TEXT,
-      name TEXT,
       category TEXT,
       amount REAL,
+      paymentMethod TEXT,
       notes TEXT,
       createdAt DATETIME,
       updatedAt DATETIME,
@@ -637,9 +768,9 @@ function createSchema() {
       user_id TEXT,
       number TEXT,
       type TEXT,
-      partyId TEXT,
-      partyName TEXT,
+      reference TEXT,
       amount REAL,
+      status TEXT,
       notes TEXT,
       createdAt DATETIME,
       updatedAt DATETIME,
@@ -690,6 +821,265 @@ function createSchema() {
       createdAt DATETIME NOT NULL
     )`);
   });
+}
+
+async function createSchemaPostgres() {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS licenses (
+      id BIGSERIAL PRIMARY KEY,
+      key TEXT UNIQUE NOT NULL,
+      status TEXT DEFAULT 'active',
+      device_id TEXT,
+      client_name TEXT,
+      notes TEXT,
+      allow_multiple_users INTEGER DEFAULT 0,
+      bound_user_id TEXT,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      activated_at TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS trial_devices (
+      device_id TEXT PRIMARY KEY,
+      started_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      createdAt TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS shops (
+      id TEXT PRIMARY KEY,
+      shop_code TEXT,
+      name TEXT,
+      owner_id TEXT,
+      owner_name TEXT,
+      phone TEXT,
+      currency TEXT DEFAULT 'SAR',
+      country TEXT DEFAULT 'SA',
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT,
+      user_code TEXT,
+      email TEXT,
+      name TEXT,
+      role TEXT DEFAULT 'owner',
+      status TEXT DEFAULT 'active',
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      device_id TEXT,
+      user_id TEXT,
+      pin_salt TEXT,
+      pin_hash TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      token TEXT UNIQUE NOT NULL,
+      user_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      createdAt TIMESTAMPTZ NOT NULL,
+      expiresAt TIMESTAMPTZ NOT NULL,
+      revokedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      last_seen TIMESTAMPTZ,
+      createdAt TIMESTAMPTZ NOT NULL,
+      UNIQUE(user_id, device_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS roles (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT,
+      name TEXT,
+      permissions TEXT,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      device_id TEXT,
+      user_id TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS customers (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      name TEXT,
+      phone TEXT,
+      address TEXT,
+      openingBalance DOUBLE PRECISION,
+      balance DOUBLE PRECISION,
+      creditLimit DOUBLE PRECISION,
+      notes TEXT,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      deletedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS suppliers (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      name TEXT,
+      phone TEXT,
+      address TEXT,
+      openingBalance DOUBLE PRECISION,
+      balance DOUBLE PRECISION,
+      creditLimit DOUBLE PRECISION,
+      notes TEXT,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      deletedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS products (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      name TEXT,
+      barcode TEXT,
+      sku TEXT,
+      buyPrice DOUBLE PRECISION,
+      sellPrice DOUBLE PRECISION,
+      quantity DOUBLE PRECISION,
+      minQuantity DOUBLE PRECISION,
+      category TEXT,
+      unit TEXT,
+      notes TEXT,
+      supplierId TEXT,
+      expiryDate TIMESTAMPTZ,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      deletedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS invoices (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      number TEXT,
+      type TEXT,
+      partyId TEXT,
+      partyName TEXT,
+      taxRate DOUBLE PRECISION,
+      paidAmount DOUBLE PRECISION,
+      paymentMethod TEXT,
+      notes TEXT,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      lines TEXT,
+      deletedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS expenses (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      category TEXT,
+      amount DOUBLE PRECISION,
+      paymentMethod TEXT,
+      notes TEXT,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      deletedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS vouchers (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      number TEXT,
+      type TEXT,
+      reference TEXT,
+      amount DOUBLE PRECISION,
+      status TEXT,
+      notes TEXT,
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ,
+      deletedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS sync_queue (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      table_name TEXT,
+      action TEXT,
+      payload TEXT,
+      status TEXT DEFAULT 'pending',
+      createdAt TIMESTAMPTZ,
+      updatedAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      device_id TEXT,
+      shop_id TEXT,
+      user_id TEXT,
+      entity TEXT,
+      entity_id TEXT,
+      action TEXT,
+      details JSONB,
+      createdAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS sync_conflicts (
+      id TEXT PRIMARY KEY,
+      table_name TEXT NOT NULL,
+      record_id TEXT NOT NULL,
+      incoming_device_id TEXT,
+      existing_device_id TEXT,
+      incoming_updatedAt TIMESTAMPTZ,
+      existing_updatedAt TIMESTAMPTZ,
+      resolution TEXT NOT NULL,
+      createdAt TIMESTAMPTZ NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS processed_client_txns (
+      client_tx_id TEXT PRIMARY KEY,
+      shop_id TEXT,
+      table_name TEXT,
+      createdAt TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`
+  ];
+
+  for (const statement of statements) {
+    await dbRun(statement);
+  }
+
+  const alterStatements = [
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS client_name TEXT`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS notes TEXT`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS allow_multiple_users INTEGER DEFAULT 0`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS bound_user_id TEXT`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS shop_code TEXT`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS owner_name TEXT`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS phone TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS user_code TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_salt TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT`
+  ];
+
+  for (const statement of alterStatements) {
+    try {
+      await dbRun(statement);
+    } catch (error) {
+      console.warn('Migration warning:', error.message);
+    }
+  }
+}
+
+function createSchema() {
+  if (dbMode === 'postgres') {
+    createSchemaPostgres().catch((error) => {
+      console.error('فشل في إنشاء مخطط PostgreSQL:', error.message);
+    });
+    return;
+  }
+  createSchemaSqlite();
 }
 
 app.get('/health', (req, res) => {
@@ -896,7 +1286,46 @@ app.get('/admin-check', requireAdminAuthorization, (req, res) => {
   res.json({ success: true, admin: true });
 });
 
-app.post('/auth/login', requireSyncAuthorization, (req, res) => {
+async function ensureInitialOwnerSeed({ shop_id, user_code, email, device_id, pin }) {
+  const userCount = await dbGet('SELECT COUNT(*) AS total FROM users');
+  if (!userCount || Number(userCount.total || 0) > 0) return null;
+
+  const now = new Date().toISOString();
+  const normalizedShopId = String(shop_id || '').trim() || uuidv4();
+  const normalizedUserCode = String(user_code || '').trim() || String(Date.now()).slice(-8);
+  const normalizedEmail = String(email || '').trim().toLowerCase() || 'owner@local.test';
+  const normalizedName = String(email || '').split('@')[0] || 'Owner';
+  const ownerId = uuidv4();
+  const salt = crypto.randomBytes(16).toString('hex');
+
+  const existingShop = await dbGet('SELECT id FROM shops WHERE id = ? LIMIT 1', [normalizedShopId]);
+  if (!existingShop) {
+    await dbRun(
+      `INSERT INTO shops (id, shop_code, name, owner_id, owner_name, phone, currency, country, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [normalizedShopId, normalizedUserCode.slice(0, 6) || '000000', 'Primary Shop', ownerId, normalizedName, '', 'SAR', 'SA', now, now],
+    );
+  }
+
+  const pinHash = pin && String(pin).trim() ? hashPin(String(pin).trim(), salt) : null;
+  await dbRun(
+    `INSERT INTO users (id, shop_id, user_code, email, name, role, status, createdAt, updatedAt, pin_salt, pin_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [ownerId, normalizedShopId, normalizedUserCode, normalizedEmail, normalizedName, 'owner', 'active', now, now, salt, pinHash],
+  );
+
+  return {
+    id: ownerId,
+    shop_id: normalizedShopId,
+    user_code: normalizedUserCode,
+    email: normalizedEmail,
+    name: normalizedName,
+    role: 'owner',
+    status: 'active',
+  };
+}
+
+app.post('/auth/login', requireSyncAuthorization, async (req, res) => {
   const { shop_id, user_code, email, device_id, pin } = req.body || {};
   const normalizedShopId = String(shop_id || '').trim();
   const normalizedUserCode = String(user_code || '').trim();
@@ -907,69 +1336,81 @@ app.post('/auth/login', requireSyncAuthorization, (req, res) => {
     return res.status(400).json({ success: false, error: 'shop_id و user_code و email و device_id مطلوبة' });
   }
 
-  db.get(
-    `SELECT * FROM users WHERE shop_id = ? AND user_code = ? LIMIT 1`,
-    [normalizedShopId, normalizedUserCode],
-    (err, user) => {
-      if (err) return res.status(500).json({ success: false, error: err.message });
-      if (!user) return res.status(401).json({ success: false, error: 'بيانات الدخول غير صحيحة' });
-      if ((user.email || '').trim().toLowerCase() !== normalizedEmail) {
-        return res.status(401).json({ success: false, error: 'البريد الإلكتروني غير مطابق' });
+  try {
+    let user = await dbGet(
+      `SELECT * FROM users WHERE shop_id = ? AND user_code = ? LIMIT 1`,
+      [normalizedShopId, normalizedUserCode],
+    );
+
+    if (!user) {
+      const userCount = await dbGet('SELECT COUNT(*) AS total FROM users');
+      const isEmptyDatabase = !userCount || Number(userCount.total || 0) === 0;
+      if (isEmptyDatabase) {
+        user = await ensureInitialOwnerSeed({
+          shop_id: normalizedShopId,
+          user_code: normalizedUserCode,
+          email: normalizedEmail,
+          device_id: normalizedDeviceId,
+          pin,
+        });
       }
-      if (user.status && user.status !== 'active') {
-        return res.status(403).json({ success: false, error: 'هذا الحساب غير نشط' });
+    }
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'بيانات الدخول غير صحيحة' });
+    }
+
+    if ((user.email || '').trim().toLowerCase() !== normalizedEmail) {
+      return res.status(401).json({ success: false, error: 'البريد الإلكتروني غير مطابق' });
+    }
+    if (user.status && user.status !== 'active') {
+      return res.status(403).json({ success: false, error: 'هذا الحساب غير نشط' });
+    }
+
+    if (user.pin_hash && user.pin_salt) {
+      if (!pin || !String(pin).trim()) {
+        return res.status(400).json({ success: false, error: 'PIN مطلوب لهذا الحساب' });
       }
-
-      if (user.pin_hash && user.pin_salt) {
-        if (!pin || !String(pin).trim()) {
-          return res.status(400).json({ success: false, error: 'PIN مطلوب لهذا الحساب' });
-        }
-        const expectedHash = hashPin(String(pin).trim(), user.pin_salt);
-        if (expectedHash !== user.pin_hash) {
-          return res.status(401).json({ success: false, error: 'PIN غير صحيح' });
-        }
+      const expectedHash = hashPin(String(pin).trim(), user.pin_salt);
+      if (expectedHash !== user.pin_hash) {
+        return res.status(401).json({ success: false, error: 'PIN غير صحيح' });
       }
+    }
 
-      const token = generateSessionToken();
-      const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
-      const sessionId = uuidv4();
+    const token = generateSessionToken();
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+    const sessionId = uuidv4();
 
-      db.run(
-        `INSERT INTO auth_sessions (id, token, user_id, shop_id, device_id, role, createdAt, expiresAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [sessionId, token, user.id, user.shop_id, normalizedDeviceId, user.role, new Date().toISOString(), expiresAt],
-        (sessionErr) => {
-          if (sessionErr) return res.status(500).json({ success: false, error: sessionErr.message });
+    await dbRun(
+      `INSERT INTO auth_sessions (id, token, user_id, shop_id, device_id, role, createdAt, expiresAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [sessionId, token, user.id, user.shop_id || normalizedShopId, normalizedDeviceId, user.role, new Date().toISOString(), expiresAt],
+    );
 
-          db.run(
-            `INSERT OR REPLACE INTO user_devices (id, user_id, device_id, shop_id, last_seen, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [uuidv4(), user.id, normalizedDeviceId, normalizedShopId, new Date().toISOString(), new Date().toISOString()],
-            (deviceErr) => {
-              if (deviceErr) {
-                console.error('device bind failed:', deviceErr.message);
-              }
+    await dbRun(
+      `INSERT OR REPLACE INTO user_devices (id, user_id, device_id, shop_id, last_seen, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [uuidv4(), user.id, normalizedDeviceId, normalizedShopId, new Date().toISOString(), new Date().toISOString()],
+    );
 
-              res.json({
-                success: true,
-                token,
-                expiresAt,
-                user: {
-                  id: user.id,
-                  shopId: user.shop_id,
-                  userCode: user.user_code,
-                  email: user.email,
-                  name: user.name,
-                  role: user.role,
-                  status: user.status || 'active',
-                },
-              });
-            },
-          );
-        },
-      );
-    },
-  );
+    return res.json({
+      success: true,
+      token,
+      expiresAt,
+      user: {
+        id: user.id,
+        shopId: user.shop_id || normalizedShopId,
+        userCode: user.user_code,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        status: user.status || 'active',
+      },
+    });
+  } catch (error) {
+    console.error('auth login failed:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.get('/auth/me', requireAuth, (req, res) => {

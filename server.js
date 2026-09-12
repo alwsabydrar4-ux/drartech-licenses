@@ -176,6 +176,18 @@ function secureKeyEquals(receivedKey, expectedKey) {
   return received.length === expected.length && require('crypto').timingSafeEqual(received, expected);
 }
 
+function getRequestApiKey(req) {
+  const directKey = req.get('x-sync-api-key') || req.get('x-api-key') || '';
+  if (directKey) return directKey;
+
+  const authHeader = req.get('authorization') || '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  return '';
+}
+
 function requireSyncAuthorization(req, res, next) {
   if (!SYNC_API_KEY) {
     if (IS_PRODUCTION) {
@@ -184,9 +196,9 @@ function requireSyncAuthorization(req, res, next) {
     return next();
   }
 
-  const receivedKey = req.get('x-sync-api-key');
+  const receivedKey = getRequestApiKey(req);
   if (!secureKeyEquals(receivedKey, SYNC_API_KEY)) {
-    return res.status(401).json({ error: 'طلب المزامنة غير مصرح به' });
+    return res.status(401).json({ error: 'طلب المزامنة غير مصرح به', expected_header: 'x-sync-api-key' });
   }
   return next();
 }
@@ -1072,14 +1084,21 @@ async function createSchemaPostgres() {
   }
 }
 
-function createSchema() {
+async function initializeDatabase() {
   if (dbMode === 'postgres') {
-    createSchemaPostgres().catch((error) => {
-      console.error('فشل في إنشاء مخطط PostgreSQL:', error.message);
-    });
-    return;
+    try {
+      await dbGet('SELECT 1');
+      await createSchemaPostgres();
+      console.log('✅ تم الاتصال بقاعدة بيانات PostgreSQL بنجاح وتهيئتها');
+      return;
+    } catch (error) {
+      console.error('❌ فشل الاتصال بقاعدة بيانات PostgreSQL:', error.message);
+      throw error;
+    }
   }
+
   createSchemaSqlite();
+  console.log('📁 تم التشغيل باستخدام SQLite المحلي');
 }
 
 app.get('/health', (req, res) => {
@@ -1682,12 +1701,18 @@ app.post('/audit-log', requireSyncAuthorization, (req, res) => {
   );
 });
 
-createSchema();
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 سيرفر Smart Accountant يعمل على المنفذ: ${PORT}`);
-  console.log(`📁 قاعدة البيانات: ${dbPath}`);
-});
+initializeDatabase()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 سيرفر Smart Accountant يعمل على المنفذ: ${PORT}`);
+      console.log(`📁 قاعدة البيانات: ${dbPath}`);
+      console.log(`🔐 وضع قاعدة البيانات: ${dbMode}`);
+    });
+  })
+  .catch((error) => {
+    console.error('فشل بدء الخادم:', error.message);
+    process.exit(1);
+  });
 
 app.post('/trial/register', requireSyncAuthorization, (req, res) => {
   const deviceId = String(req.body?.device_id || '').trim();

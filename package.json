@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test sync.test.js license.test.js"
+    "test": "node --test --test-concurrency=1 sync.test.js license.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",

@@ -131,7 +131,7 @@ function createSqliteDbAdapter() {
   };
 }
 
-const dbMode = DATABASE_URL ? 'postgres' : 'sqlite';
+let dbMode = DATABASE_URL ? 'postgres' : 'sqlite';
 
 app.use(cors({
   origin(origin, callback) {
@@ -260,7 +260,7 @@ if (!fs.existsSync(dbDir) && dbDir !== '.' && dbDir !== './') {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-const db = DATABASE_URL ? createPostgresDbAdapter() : createSqliteDbAdapter();
+let db = DATABASE_URL ? createPostgresDbAdapter() : createSqliteDbAdapter();
 
 function dbGet(query, params = []) {
   return new Promise((resolve, reject) => {
@@ -1093,7 +1093,12 @@ async function initializeDatabase() {
       return;
     } catch (error) {
       console.error('❌ فشل الاتصال بقاعدة بيانات PostgreSQL:', error.message);
-      throw error;
+      console.warn('⚠️ سيتم التبديل إلى SQLite المحلي بدلاً من PostgreSQL لتجنب توقف السيرفر.');
+      dbMode = 'sqlite';
+      db = createSqliteDbAdapter();
+      createSchemaSqlite();
+      console.log('📁 تم التشغيل باستخدام SQLite المحلي بعد فشل PostgreSQL');
+      return;
     }
   }
 

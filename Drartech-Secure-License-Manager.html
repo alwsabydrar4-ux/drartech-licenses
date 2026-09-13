@@ -1,0 +1,550 @@
+﻿<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DrarTech Secure License Manager</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-alt: #1f2937;
+      --soft: #0b1220;
+      --primary: #8b5cf6;
+      --primary-2: #a78bfa;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --border: rgba(148, 163, 184, 0.2);
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: "Segoe UI", Tahoma, sans-serif; background: linear-gradient(180deg, #0b1120 0%, #0f172a 100%); color: var(--text); }
+    body { padding: 20px; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center; gap: 20px;
+      padding: 18px 20px; border: 1px solid var(--border); border-radius: 18px;
+      background: rgba(17, 24, 39, 0.9); box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .logo {
+      width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--primary), var(--primary-2)); font-weight: 800; color: white;
+      box-shadow: 0 10px 20px rgba(139, 92, 246, 0.35);
+    }
+    h1 { margin: 0; font-size: clamp(20px, 2vw, 30px); }
+    .sub { color: var(--muted); margin-top: 4px; font-size: 12px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .field { display: flex; flex-direction: column; gap: 8px; }
+    .field label { font-size: 12px; color: var(--muted); }
+    input, select, button, textarea {
+      border-radius: 10px; border: 1px solid var(--border); background: rgba(15, 23, 42, 0.9); color: var(--text);
+      padding: 10px 12px; font-size: 14px;
+    }
+    input, select, textarea { width: 100%; }
+    textarea { min-height: 82px; resize: vertical; }
+    button {
+      cursor: pointer; border: 1px solid transparent; transition: 0.2s ease; font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: white; min-width: 130px;
+    }
+    button.secondary { background: rgba(148, 163, 184, 0.12); border-color: var(--border); color: var(--text); }
+    button.danger { background: linear-gradient(135deg, #dc2626, #ef4444); }
+    button.success { background: linear-gradient(135deg, #15803d, #22c55e); }
+    button:hover { transform: translateY(-1px); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 20px; }
+    .card {
+      background: rgba(17, 24, 39, 0.92); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .card h2 { margin: 0 0 16px; font-size: 18px; }
+    .stack { display: grid; gap: 12px; }
+    .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .inline { display: flex; align-items: center; gap: 8px; }
+    input[type="checkbox"] { width: 18px; height: 18px; }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px;
+    }
+    .stat {
+      background: rgba(15, 23, 42, 0.82); border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+    }
+    .stat .label { color: var(--muted); font-size: 12px; }
+    .stat .value { font-size: 28px; font-weight: 800; margin-top: 8px; }
+    .status-tag {
+      display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid transparent;
+    }
+    .status-active { background: rgba(34, 197, 94, 0.12); color: #86efac; border-color: rgba(34, 197, 94, 0.35); }
+    .status-used { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.35); }
+    .status-expired { background: rgba(239, 68, 68, 0.12); color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
+    .status-banned { background: rgba(168, 85, 247, 0.12); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.35); }
+    .status-suspended { background: rgba(239, 68, 68, 0.12); color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
+    .list-table { width: 100%; border-collapse: collapse; margin-top: 12px; overflow: hidden; border-radius: 14px; }
+    .list-table th, .list-table td { text-align: right; padding: 12px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .list-table thead { background: rgba(139, 92, 246, 0.08); }
+    .list-table th { font-size: 12px; color: var(--muted); }
+    .ops { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ops button { min-width: auto; padding: 7px 10px; font-size: 12px; }
+    .result {
+      margin-top: 12px; padding: 12px; border-radius: 12px; background: rgba(15, 23, 42, 0.9); color: #dbeafe;
+      border: 1px solid var(--border); min-height: 80px; white-space: pre-wrap; font-family: Consolas, monospace; font-size: 12px; overflow: auto;
+    }
+    .hidden { display: none !important; }
+    @media (max-width: 650px) {
+      body { padding: 12px; }
+      .topbar { flex-direction: column; align-items: stretch; }
+      .toolbar { width: 100%; }
+      .row { grid-template-columns: 1fr; }
+      .list-table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">D</div>
+        <div>
+          <h1>DrarTech Secure License Manager</h1>
+          <div class="sub">واجهة إدارة تراخيص التطبيق الحقيقية — مرتبطة بــ device_id + owner/team logic</div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="field" style="min-width:280px;">
+          <label>رابط السيرفر</label>
+          <input id="serverUrl" placeholder="يتم تحديده تلقائيًا من السيرفر" />
+        </div>
+        <div class="field" style="min-width:200px;">
+          <label>x-admin-secret</label>
+          <input id="adminSecret" type="password" placeholder="أدخل المفتاح السري" />
+        </div>
+        <button id="loadStatsBtn" class="secondary">تحديث</button>
+      </div>
+    </header>
+
+    <section class="stats" id="statsBox"></section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>إنشاء ترخيص</h2>
+        <div class="stack">
+          <div class="row">
+            <div class="field">
+              <label>device_id</label>
+              <input id="deviceId" placeholder="مثال: phone-001" />
+            </div>
+            <div class="field">
+              <label>اسم العميل</label>
+              <input id="clientName" placeholder="اسم المالك أو الشركة" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>shop_id</label>
+              <input id="shopId" placeholder="اختياري" />
+            </div>
+            <div class="field">
+              <label>owner_user_id</label>
+              <input id="ownerUserId" placeholder="اختياري" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>نوع الترخيص</label>
+              <select id="licenseType">
+                <option value="owner_single">owner_single</option>
+                <option value="owner_team">owner_team</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>عدد موظفين الفريق</label>
+              <input id="maxStaffUsers" type="number" value="3" min="0" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>تاريخ الانتهاء</label>
+            <input id="expiresAt" type="date" />
+          </div>
+
+          <label class="inline">
+            <input id="allowStaffAccess" type="checkbox" checked />
+            <span>السماح للموظفين بالحصول على Pro ضمن نفس المحل</span>
+          </label>
+
+          <div class="field">
+            <label>ملاحظات</label>
+            <textarea id="notes" placeholder="ملاحظات إن وجدت"></textarea>
+          </div>
+
+          <button id="generateBtn">إنشاء مفتاح ترخيص</button>
+          <div id="generateResult" class="result"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>التحقق من المفتاح</h2>
+        <div class="stack">
+          <div class="field">
+            <label>license key</label>
+            <input id="verifyKey" placeholder="DRAR-XXXX" />
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>device_id</label>
+              <input id="verifyDeviceId" placeholder="نفس الجهاز المرتبط به" />
+            </div>
+            <div class="field">
+              <label>user_id</label>
+              <input id="verifyUserId" placeholder="مالك أو موظف" />
+            </div>
+          </div>
+          <div class="field">
+            <label>shop_id</label>
+            <input id="verifyShopId" placeholder="اختياري" />
+          </div>
+          <button id="verifyBtn" class="success">تحقق من الترخيص</button>
+          <div id="verifyResult" class="result"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>قائمة التراخيص</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <div class="field">
+          <label>بحث</label>
+          <input id="searchInput" placeholder="ابحث بالـ key أو device_id أو اسم العميل" />
+        </div>
+        <div class="field">
+          <label>الحالة</label>
+          <select id="statusFilter">
+            <option value="all">الكل</option>
+            <option value="active">active</option>
+            <option value="used">used</option>
+            <option value="expired">expired</option>
+            <option value="banned">banned</option>
+            <option value="suspended">suspended</option>
+          </select>
+        </div>
+      </div>
+      <button id="refreshLicensesBtn" class="secondary">تحديث القائمة</button>
+      <div style="overflow:auto;">
+        <table class="list-table" id="licensesTable">
+          <thead>
+            <tr>
+              <th>المفتاح</th>
+              <th>الحالة</th>
+              <th>النوع</th>
+              <th>الجهاز</th>
+              <th>العميل</th>
+              <th>المحل</th>
+              <th>المالك</th>
+              <th>العمليات</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const serverUrlInput = document.getElementById('serverUrl');
+    const adminSecretInput = document.getElementById('adminSecret');
+    const statsBox = document.getElementById('statsBox');
+    const generateResult = document.getElementById('generateResult');
+    const verifyResult = document.getElementById('verifyResult');
+    const licensesTableBody = document.querySelector('#licensesTable tbody');
+
+    const storageKeys = {
+      serverUrl: 'drar_secure_license_server_url',
+      adminSecret: 'drar_secure_license_admin_secret',
+    };
+
+    function saveConfig() {
+      localStorage.setItem(storageKeys.serverUrl, serverUrlInput.value.trim());
+      localStorage.setItem(storageKeys.adminSecret, adminSecretInput.value.trim());
+    }
+
+    function loadConfig() {
+      const savedUrl = localStorage.getItem(storageKeys.serverUrl);
+      const defaultUrl = window.location.protocol === 'http:' || window.location.protocol === 'https:'
+        ? window.location.origin
+        : 'http://localhost:3000';
+      serverUrlInput.value = savedUrl || defaultUrl;
+      const savedSecret = localStorage.getItem(storageKeys.adminSecret);
+      if (savedSecret) adminSecretInput.value = savedSecret;
+    }
+
+    function safeJson(value) {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch (error) {
+        return String(value);
+      }
+    }
+
+    function headers(includeAdmin = true) {
+      const headers = { 'Content-Type': 'application/json' };
+      const secret = adminSecretInput.value.trim();
+      if (includeAdmin && secret) {
+        headers['x-admin-secret'] = secret;
+      }
+      return headers;
+    }
+
+    async function request(path, options = {}) {
+      const baseUrl = serverUrlInput.value.trim().replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}${path}`, {
+        ...options,
+        headers: {
+          ...headers(true),
+          ...(options.headers || {})
+        }
+      });
+
+      const text = await response.text();
+      let payload = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch (_) {
+        payload = { message: text };
+      }
+
+      if (!response.ok) {
+        const message = payload?.error || payload?.message || `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+
+      return payload;
+    }
+
+    function renderStatus(status) {
+      const normalized = String(status || 'active').toLowerCase();
+      const map = {
+        active: 'status-active',
+        used: 'status-used',
+        expired: 'status-expired',
+        banned: 'status-banned',
+        suspended: 'status-suspended'
+      };
+      return `<span class="status-tag ${map[normalized] || 'status-active'}">${normalized}</span>`;
+    }
+
+    function setResult(el, value) {
+      el.textContent = typeof value === 'string' ? value : safeJson(value);
+    }
+
+    function renderStats(data) {
+      const stats = [
+        { label: 'إجمالي التراخيص', value: Number(data?.total || 0) },
+        { label: 'نشط', value: Number(data?.active || 0) },
+        { label: 'مستخدم', value: Number(data?.used || 0) },
+        { label: 'محظور', value: Number(data?.banned || 0) },
+        { label: 'موقوف', value: Number(data?.suspended || 0) },
+        { label: 'منشأ اليوم', value: Number(data?.today_created || 0) },
+        { label: 'مفعل اليوم', value: Number(data?.today_activated || 0) }
+      ];
+
+      statsBox.innerHTML = stats.map((item) => `
+        <div class="stat">
+          <div class="label">${item.label}</div>
+          <div class="value">${item.value}</div>
+        </div>
+      `).join('');
+    }
+
+    async function loadStats() {
+      try {
+        saveConfig();
+        const data = await request('/stats');
+        renderStats(data);
+      } catch (error) {
+        statsBox.innerHTML = `<div class="stat"><div class="label">خطأ</div><div class="value" style="font-size:16px;">${error.message}</div></div>`;
+      }
+    }
+
+    async function refreshLicenses() {
+      try {
+        saveConfig();
+        const search = document.getElementById('searchInput').value.trim();
+        const status = document.getElementById('statusFilter').value;
+        const qs = new URLSearchParams();
+        if (search) qs.set('search', search);
+        if (status && status !== 'all') qs.set('status', status);
+        const url = `/licenses${qs.toString() ? `?${qs.toString()}` : ''}`;
+        const data = await request(url);
+        const rows = Array.isArray(data?.licenses) ? data.licenses : [];
+
+        if (!rows.length) {
+          licensesTableBody.innerHTML = `<tr><td colspan="8" style="padding:16px; color:var(--muted);">لا توجد تراخيص</td></tr>`;
+          return;
+        }
+
+        licensesTableBody.innerHTML = rows.map((item) => `
+          <tr>
+            <td><strong>${item.key || '-'}</strong></td>
+            <td>${renderStatus(item.status)}</td>
+            <td>${item.license_type || item.mode || 'owner_single'}</td>
+            <td>${item.device_id || '-'}</td>
+            <td>${item.client_name || '-'}</td>
+            <td>${item.shop_id || '-'}</td>
+            <td>${item.owner_user_id || '-'}</td>
+            <td>
+              <div class="ops">
+                ${item.status === 'banned' || item.status === 'suspended'
+                  ? `<button class="success" data-action="activate" data-id="${item.id}" data-key="${item.key}">تفعيل</button>`
+                  : `<button class="danger" data-action="suspend" data-id="${item.id}" data-key="${item.key}">إيقاف مؤقت</button>`}
+                ${item.status !== 'banned'
+                  ? `<button class="danger" data-action="ban" data-id="${item.id}" data-key="${item.key}">حظر دائم</button>`
+                  : ''}
+                <button class="secondary" data-action="reset" data-id="${item.id}" data-key="${item.key}">إعادة ربط الجهاز</button>
+                <button class="danger" data-action="delete" data-id="${item.id}" data-key="${item.key}">حذف نهائي</button>
+              </div>
+            </td>
+          </tr>
+        `).join('');
+
+        document.querySelectorAll('[data-action]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const action = button.dataset.action;
+            const id = Number(button.dataset.id);
+            const key = button.dataset.key;
+
+            if (action === 'reset') {
+              try {
+                if (!confirm(`إعادة ربط الجهاز للمفتاح ${key}`)) return;
+                await request('/reset-device', {
+                  method: 'POST',
+                  body: JSON.stringify({ id, key })
+                });
+                await refreshLicenses();
+              } catch (error) {
+                alert(error.message);
+              }
+              return;
+            }
+
+            if (action === 'activate' || action === 'suspend' || action === 'ban') {
+              const nextStatus = action === 'activate' ? 'active' : action === 'ban' ? 'banned' : 'suspended';
+              try {
+                const actionLabel = action === 'activate' ? 'تفعيل' : action === 'ban' ? 'حظر دائم' : 'إيقاف مؤقت';
+                if (!confirm(`${actionLabel} المفتاح ${key}`)) return;
+                await request('/update-status', {
+                  method: 'POST',
+                  body: JSON.stringify({ id, key, status: nextStatus })
+                });
+                await refreshLicenses();
+              } catch (error) {
+                alert(error.message);
+              }
+              return;
+            }
+
+            if (action === 'delete') {
+              try {
+                if (!confirm(`حذف نهائي للمفتاح ${key}`)) return;
+                await request(`/licenses/${id}`, {
+                  method: 'DELETE',
+                });
+                await refreshLicenses();
+              } catch (error) {
+                alert(error.message);
+              }
+            }
+          });
+        });
+      } catch (error) {
+        licensesTableBody.innerHTML = `<tr><td colspan="8" style="padding:16px; color:#fca5a5;">${error.message}</td></tr>`;
+      }
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', async () => {
+      try {
+        saveConfig();
+        const payload = {
+          device_id: document.getElementById('deviceId').value.trim(),
+          client_name: document.getElementById('clientName').value.trim() || null,
+          shop_id: document.getElementById('shopId').value.trim() || null,
+          owner_user_id: document.getElementById('ownerUserId').value.trim() || null,
+          license_type: document.getElementById('licenseType').value,
+          allow_staff_access: document.getElementById('allowStaffAccess').checked,
+          max_staff_users: Number(document.getElementById('maxStaffUsers').value || 0),
+          expires_at: document.getElementById('expiresAt').value || null,
+          notes: document.getElementById('notes').value.trim() || null,
+        };
+
+        if (!payload.device_id) {
+          throw new Error('device_id مطلوب');
+        }
+
+        const result = await request('/generate', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        setResult(generateResult, result);
+        await refreshLicenses();
+        await loadStats();
+      } catch (error) {
+        setResult(generateResult, { error: error.message });
+      }
+    });
+
+    document.getElementById('verifyBtn').addEventListener('click', async () => {
+      try {
+        saveConfig();
+        const payload = {
+          key: document.getElementById('verifyKey').value.trim(),
+          device_id: document.getElementById('verifyDeviceId').value.trim(),
+          user_id: document.getElementById('verifyUserId').value.trim() || null,
+          shop_id: document.getElementById('verifyShopId').value.trim() || null,
+        };
+
+        if (!payload.key || !payload.device_id) {
+          throw new Error('المفتاح وdevice_id مطلوبان');
+        }
+
+        const result = await fetch(`${serverUrlInput.value.trim().replace(/\/$/, '')}/verify`, {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify(payload)
+        });
+
+        const text = await result.text();
+        const json = text ? JSON.parse(text) : {};
+        if (!result.ok) {
+          throw new Error(json?.error || json?.message || `HTTP ${result.status}`);
+        }
+
+        setResult(verifyResult, json);
+      } catch (error) {
+        setResult(verifyResult, { error: error.message });
+      }
+    });
+
+    document.getElementById('loadStatsBtn').addEventListener('click', async () => {
+      await loadStats();
+      await refreshLicenses();
+    });
+
+    document.getElementById('refreshLicensesBtn').addEventListener('click', async () => {
+      await refreshLicenses();
+    });
+
+    document.getElementById('searchInput').addEventListener('input', () => refreshLicenses());
+    document.getElementById('statusFilter').addEventListener('change', () => refreshLicenses());
+
+    loadConfig();
+    loadStats();
+    refreshLicenses();
+  </script>
+</body>
+</html>

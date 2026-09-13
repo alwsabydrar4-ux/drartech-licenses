@@ -1367,6 +1367,10 @@ app.get('/', (req, res) => {
   });
 });
 
+app.get(['/admin', '/admin/'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'Drartech-Secure-License-Manager.html'));
+});
+
 app.get('/admin-check', requireAdminAuthorization, (req, res) => {
   res.json({ success: true, admin: true });
 });
@@ -1522,12 +1526,20 @@ app.post('/auth/logout', requireAuth, (req, res) => {
 });
 
 app.get('/stats', requireAdminAuthorization, (req, res) => {
+  const todayCreatedCondition = dbMode === 'postgres'
+    ? 'DATE(created_at) = CURRENT_DATE'
+    : "date(created_at)=date('now')";
+  const todayActivatedCondition = dbMode === 'postgres'
+    ? 'DATE(activated_at) = CURRENT_DATE'
+    : "date(activated_at)=date('now')";
+
   db.get(`SELECT COUNT(*) as total,
             SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) as active,
             SUM(CASE WHEN status='used' THEN 1 ELSE 0 END) as used,
             SUM(CASE WHEN status='banned' THEN 1 ELSE 0 END) as banned,
-            SUM(CASE WHEN date(created_at)=date('now') THEN 1 ELSE 0 END) as today_created,
-            SUM(CASE WHEN date(activated_at)=date('now') THEN 1 ELSE 0 END) as today_activated
+            SUM(CASE WHEN status='suspended' THEN 1 ELSE 0 END) as suspended,
+            SUM(CASE WHEN ${todayCreatedCondition} THEN 1 ELSE 0 END) as today_created,
+            SUM(CASE WHEN ${todayActivatedCondition} THEN 1 ELSE 0 END) as today_activated
             FROM licenses`, (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(row);
@@ -1639,6 +1651,7 @@ app.post('/verify', async (req, res) => {
   const row = await dbGet(`SELECT * FROM licenses WHERE key = ?`, [key]).catch(() => null);
   if (!row) return res.json({ valid: false, message: 'المفتاح غير موجود' });
   if (row.status === 'banned') return res.json({ valid: false, message: 'الترخيص محظور', status: row.status });
+  if (row.status === 'suspended') return res.json({ valid: false, message: 'الترخيص موقوف مؤقتًا', status: row.status });
   if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) {
     await dbRun(`UPDATE licenses SET status='expired' WHERE id=?`, [row.id]);
     return res.json({ valid: false, message: 'الترخيص منتهي الصلاحية', status: 'expired' });
@@ -1720,7 +1733,7 @@ app.post('/reset-device', requireAdminAuthorization, (req, res) => {
 });
 
 app.post('/update-status', requireAdminAuthorization, (req, res) => {
-  const allowed = ['active', 'used', 'banned', 'expired'];
+  const allowed = ['active', 'used', 'banned', 'suspended', 'expired'];
   if (!allowed.includes(req.body?.status)) return res.status(400).json({ error: 'حالة غير صالحة' });
   db.run(`UPDATE licenses SET status=? WHERE id=?`, [req.body.status, Number(req.body.id)], function (err) {
     if (err) return res.status(500).json({ error: err.message });

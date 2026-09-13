@@ -1369,7 +1369,15 @@ app.get('/', (req, res) => {
 });
 
 app.get(['/admin', '/admin/'], (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'Drartech-Secure-License-Manager.html'));
+  const dashboardFiles = [
+    path.join(__dirname, 'Drartech-Secure-License-Manager.html'),
+    path.join(__dirname, '..', 'Drartech-Secure-License-Manager.html'),
+  ];
+  const dashboardFile = dashboardFiles.find((file) => fs.existsSync(file));
+  if (!dashboardFile) {
+    return res.status(500).send('Admin dashboard file is missing from the deployment.');
+  }
+  return res.sendFile(dashboardFile);
 });
 
 app.get('/admin-check', requireAdminAuthorization, (req, res) => {

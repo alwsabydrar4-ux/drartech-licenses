@@ -275,10 +275,11 @@
 
     function loadConfig() {
       const savedUrl = localStorage.getItem(storageKeys.serverUrl);
-      const defaultUrl = window.location.protocol === 'http:' || window.location.protocol === 'https:'
+      const openedFromServer = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+      const defaultUrl = openedFromServer
         ? window.location.origin
         : 'http://localhost:3000';
-      serverUrlInput.value = savedUrl || defaultUrl;
+      serverUrlInput.value = openedFromServer ? defaultUrl : (savedUrl || defaultUrl);
       const savedSecret = localStorage.getItem(storageKeys.adminSecret);
       if (savedSecret) adminSecretInput.value = savedSecret;
     }

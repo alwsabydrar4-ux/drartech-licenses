@@ -95,26 +95,76 @@ test('generates device-bound licenses and enforces admin authorization', { concu
   }
 });
 
-test('multi-user licenses accept multiple users on the bound device', { concurrency: false }, async () => {
+test('owner single-device licenses are bound to the device and reject other users', { concurrency: false }, async () => {
   const server = await startServer();
   try {
     const headers = { 'x-admin-secret': 'test-admin-secret', 'content-type': 'application/json' };
     const generated = await request(server, '/generate', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ device_id: 'phone-multi', allow_multiple_users: true }),
+      body: JSON.stringify({
+        device_id: 'owner-phone-1',
+        client_name: 'مالك',
+        license_type: 'owner_single',
+        owner_user_id: 'owner-1',
+        shop_id: 'shop-1',
+      }),
     });
+    assert.equal(generated.status, 200, JSON.stringify(generated.data));
     assert.ok(generated.data.key, JSON.stringify(generated.data));
-    const first = await request(server, '/verify', {
+
+    const ownerValid = await request(server, '/verify', {
       method: 'POST',
-      ...jsonBody({ key: generated.data.key, device_id: 'phone-multi', user_id: 'user-1' }),
+      ...jsonBody({ key: generated.data.key, device_id: 'owner-phone-1', user_id: 'owner-1', shop_id: 'shop-1' }),
     });
-    const second = await request(server, '/verify', {
+    const staffBlocked = await request(server, '/verify', {
       method: 'POST',
-      ...jsonBody({ key: generated.data.key, device_id: 'phone-multi', user_id: 'user-2' }),
+      ...jsonBody({ key: generated.data.key, device_id: 'owner-phone-1', user_id: 'staff-1', shop_id: 'shop-1' }),
     });
-    assert.equal(first.data.valid, true, JSON.stringify(first.data));
-    assert.equal(second.data.valid, true, JSON.stringify(second.data));
+
+    assert.equal(ownerValid.data.valid, true, JSON.stringify(ownerValid.data));
+    assert.equal(staffBlocked.data.valid, false, JSON.stringify(staffBlocked.data));
+    assert.match(staffBlocked.data.message, /مستخدم|owner|مرخص/i);
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('owner team licenses allow the owner and approved staff users on the same shop', { concurrency: false }, async () => {
+  const server = await startServer();
+  try {
+    const headers = { 'x-admin-secret': 'test-admin-secret', 'content-type': 'application/json' };
+    const generated = await request(server, '/generate', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        device_id: 'owner-team-phone',
+        client_name: 'مكتب',
+        license_type: 'owner_team',
+        owner_user_id: 'owner-9',
+        shop_id: 'shop-9',
+        allow_staff_access: true,
+        max_staff_users: 3,
+      }),
+    });
+    assert.equal(generated.status, 200, JSON.stringify(generated.data));
+
+    const ownerAccess = await request(server, '/verify', {
+      method: 'POST',
+      ...jsonBody({ key: generated.data.key, device_id: 'owner-team-phone', user_id: 'owner-9', shop_id: 'shop-9' }),
+    });
+    const staffAccess = await request(server, '/verify', {
+      method: 'POST',
+      ...jsonBody({ key: generated.data.key, device_id: 'owner-team-phone', user_id: 'staff-1', shop_id: 'shop-9' }),
+    });
+    const extraStaff = await request(server, '/verify', {
+      method: 'POST',
+      ...jsonBody({ key: generated.data.key, device_id: 'owner-team-phone', user_id: 'staff-2', shop_id: 'shop-9' }),
+    });
+
+    assert.equal(ownerAccess.data.valid, true, JSON.stringify(ownerAccess.data));
+    assert.equal(staffAccess.data.valid, true, JSON.stringify(staffAccess.data));
+    assert.equal(extraStaff.data.valid, true, JSON.stringify(extraStaff.data));
   } finally {
     await stopServer(server);
   }

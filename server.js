@@ -216,6 +216,28 @@ function requireAdminAuthorization(req, res, next) {
   return next();
 }
 
+function normalizeLicenseType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'team' || raw === 'owner_team' || raw === 'multi_user' || raw === 'multi-user' || raw === 'owner-team') {
+    return 'owner_team';
+  }
+  if (raw === 'single' || raw === 'owner_single' || raw === 'single_device' || raw === 'owner-single' || raw === 'owner_single_device') {
+    return 'owner_single';
+  }
+  return 'owner_single';
+}
+
+function parseBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  }
+  return Boolean(value);
+}
+
 function generateSessionToken() {
   return `sess_${crypto.randomBytes(32).toString('hex')}`;
 }
@@ -586,14 +608,29 @@ function createSchemaSqlite() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       key TEXT UNIQUE NOT NULL,
       status TEXT DEFAULT 'active',
+      license_type TEXT DEFAULT 'owner_single',
       device_id TEXT,
+      shop_id TEXT,
+      owner_user_id TEXT,
       client_name TEXT,
       notes TEXT,
       allow_multiple_users INTEGER DEFAULT 0,
+      allow_staff_access INTEGER DEFAULT 0,
+      max_staff_users INTEGER DEFAULT 0,
       bound_user_id TEXT,
       expires_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       activated_at DATETIME
+    )`);
+
+    db.run(`CREATE TABLE IF NOT EXISTS license_staff_users (
+      id TEXT PRIMARY KEY,
+      license_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(license_id, user_id, shop_id)
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS trial_devices (
@@ -604,9 +641,14 @@ function createSchemaSqlite() {
     )`);
 
     for (const column of [
+      ['license_type', 'TEXT DEFAULT "owner_single"'],
       ['client_name', 'TEXT'],
       ['notes', 'TEXT'],
+      ['shop_id', 'TEXT'],
+      ['owner_user_id', 'TEXT'],
       ['allow_multiple_users', 'INTEGER DEFAULT 0'],
+      ['allow_staff_access', 'INTEGER DEFAULT 0'],
+      ['max_staff_users', 'INTEGER DEFAULT 0'],
       ['bound_user_id', 'TEXT'],
       ['expires_at', 'DATETIME'],
     ]) {
@@ -841,14 +883,28 @@ async function createSchemaPostgres() {
       id BIGSERIAL PRIMARY KEY,
       key TEXT UNIQUE NOT NULL,
       status TEXT DEFAULT 'active',
+      license_type TEXT DEFAULT 'owner_single',
       device_id TEXT,
+      shop_id TEXT,
+      owner_user_id TEXT,
       client_name TEXT,
       notes TEXT,
       allow_multiple_users INTEGER DEFAULT 0,
+      allow_staff_access INTEGER DEFAULT 0,
+      max_staff_users INTEGER DEFAULT 0,
       bound_user_id TEXT,
       expires_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       activated_at TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS license_staff_users (
+      id TEXT PRIMARY KEY,
+      license_id BIGINT NOT NULL,
+      user_id TEXT NOT NULL,
+      shop_id TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      granted_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(license_id, user_id, shop_id)
     )`,
     `CREATE TABLE IF NOT EXISTS trial_devices (
       device_id TEXT PRIMARY KEY,
@@ -1062,9 +1118,14 @@ async function createSchemaPostgres() {
   }
 
   const alterStatements = [
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS license_type TEXT DEFAULT 'owner_single'`,
     `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS client_name TEXT`,
     `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS notes TEXT`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS shop_id TEXT`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS owner_user_id TEXT`,
     `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS allow_multiple_users INTEGER DEFAULT 0`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS allow_staff_access INTEGER DEFAULT 0`,
+    `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS max_staff_users INTEGER DEFAULT 0`,
     `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS bound_user_id TEXT`,
     `ALTER TABLE licenses ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS shop_code TEXT`,
@@ -1496,102 +1557,154 @@ app.get('/licenses', requireAdminAuthorization, (req, res) => {
   });
 });
 
-app.post('/generate', requireAdminAuthorization, (req, res) => {
-  const {
-    device_id,
-    client_name,
-    notes,
-    expires_at,
-    allow_multiple_users,
-    multi_user,
-  } = req.body || {};
-  if (!device_id || !String(device_id).trim()) {
+app.post('/generate', requireAdminAuthorization, async (req, res) => {
+  const body = req.body || {};
+  const deviceId = String(body.device_id || body.deviceId || '').trim();
+  const clientName = String(body.client_name || body.clientName || '').trim() || null;
+  const notes = String(body.notes || '').trim() || null;
+  const expiresAt = String(body.expires_at || body.expiresAt || '').trim() || null;
+  const licenseType = normalizeLicenseType(body.license_type || body.licenseType || body.type || (body.allow_multiple_users || body.multi_user ? 'owner_team' : 'owner_single'));
+  const ownerUserId = String(body.owner_user_id || body.ownerUserId || '').trim() || null;
+  const shopId = String(body.shop_id || body.shopId || '').trim() || null;
+  const allowStaffAccess = parseBoolean(body.allow_staff_access ?? body.allowStaffAccess ?? body.allow_multiple_users ?? body.multi_user ?? false);
+  const maxStaffUsers = Number(body.max_staff_users ?? body.maxStaffUsers ?? 0);
+
+  if (!deviceId) {
     return res.status(400).json({ error: 'device_id مطلوب لإنشاء ترخيص مرتبط بالجهاز' });
   }
-  const deviceId = String(device_id).trim();
-  const multiUser = Boolean(allow_multiple_users ?? multi_user);
 
-  db.get(
+  const existing = await dbGet(
     `SELECT * FROM licenses WHERE device_id = ? AND status != 'banned' LIMIT 1`,
     [deviceId],
-    (findErr, existing) => {
-      if (findErr) return res.status(500).json({ error: findErr.message });
-      if (existing) {
-        return res.json({
-          success: true,
-          existing: true,
-          key: existing.key,
-          id: existing.id,
-          device_id: existing.device_id,
-          allow_multiple_users: Boolean(existing.allow_multiple_users),
-          mode: existing.allow_multiple_users ? 'multi-user' : 'single-user',
-        });
-      }
-
-      const newKey = `DRAR-${require('crypto').randomBytes(4).toString('hex').toUpperCase()}`;
-      db.run(
-        `INSERT INTO licenses
-         (key, status, device_id, client_name, notes, allow_multiple_users, expires_at)
-         VALUES (?, 'active', ?, ?, ?, ?, ?)`,
-        [newKey, deviceId, client_name || null, notes || null, multiUser ? 1 : 0, expires_at || null],
-        function (insertErr) {
-          if (insertErr) {
-            return res.status(500).json({ error: 'فشل في توليد المفتاح', details: insertErr.message });
-          }
-          res.json({
-            success: true,
-            existing: false,
-            key: newKey,
-            id: this.lastID,
-            device_id: deviceId,
-            allow_multiple_users: multiUser,
-            mode: multiUser ? 'multi-user' : 'single-user',
-          });
-        },
-      );
-    },
   );
+  if (existing) {
+    return res.json({
+      success: true,
+      existing: true,
+      key: existing.key,
+      id: existing.id,
+      device_id: existing.device_id,
+      license_type: existing.license_type || 'owner_single',
+      allow_staff_access: Boolean(existing.allow_staff_access),
+      mode: existing.license_type === 'owner_team' ? 'owner-team' : 'owner-single',
+    });
+  }
+
+  const newKey = `DRAR-${require('crypto').randomBytes(4).toString('hex').toUpperCase()}`;
+  const insertResult = await dbRun(
+    `INSERT INTO licenses
+     (key, status, license_type, device_id, shop_id, owner_user_id, client_name, notes, allow_multiple_users, allow_staff_access, max_staff_users, expires_at)
+     VALUES (?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      newKey,
+      licenseType,
+      deviceId,
+      shopId,
+      ownerUserId,
+      clientName,
+      notes,
+      licenseType === 'owner_team' ? 1 : 0,
+      allowStaffAccess ? 1 : 0,
+      Number.isFinite(maxStaffUsers) ? maxStaffUsers : 0,
+      expiresAt,
+    ],
+  );
+
+  return res.json({
+    success: true,
+    existing: false,
+    id: insertResult.lastID,
+    key: newKey,
+    device_id: deviceId,
+    license_type: licenseType,
+    owner_user_id: ownerUserId,
+    shop_id: shopId,
+    allow_multiple_users: licenseType === 'owner_team',
+    allow_staff_access: allowStaffAccess,
+    max_staff_users: Number.isFinite(maxStaffUsers) ? maxStaffUsers : 0,
+    mode: licenseType === 'owner_team' ? 'owner-team' : 'owner-single',
+  });
 });
 
-app.post('/verify', (req, res) => {
+app.post('/verify', async (req, res) => {
   const body = req.body || {};
   const key = String(body.key || body.licenseKey || '').trim().toUpperCase();
   const deviceId = String(body.device_id || body.deviceId || '').trim();
-  const userId = body.user_id || body.userId || null;
+  const userId = String(body.user_id || body.userId || '').trim() || null;
+  const shopId = String(body.shop_id || body.shopId || '').trim() || null;
 
   if (!key) return res.status(400).json({ valid: false, error: 'المفتاح مطلوب' });
   if (!deviceId) return res.status(400).json({ valid: false, error: 'معرف الجهاز مطلوب' });
 
-  db.get(`SELECT * FROM licenses WHERE key = ?`, [key], (err, row) => {
-    if (err) return res.status(500).json({ valid: false, error: 'خطأ في قاعدة البيانات' });
-    if (!row) return res.json({ valid: false, message: 'المفتاح غير موجود' });
-    if (row.status === 'banned') return res.json({ valid: false, message: 'الترخيص محظور', status: row.status });
-    if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) {
-      db.run(`UPDATE licenses SET status='expired' WHERE id=?`, [row.id]);
-      return res.json({ valid: false, message: 'الترخيص منتهي الصلاحية', status: 'expired' });
+  const row = await dbGet(`SELECT * FROM licenses WHERE key = ?`, [key]).catch(() => null);
+  if (!row) return res.json({ valid: false, message: 'المفتاح غير موجود' });
+  if (row.status === 'banned') return res.json({ valid: false, message: 'الترخيص محظور', status: row.status });
+  if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) {
+    await dbRun(`UPDATE licenses SET status='expired' WHERE id=?`, [row.id]);
+    return res.json({ valid: false, message: 'الترخيص منتهي الصلاحية', status: 'expired' });
+  }
+  if (row.device_id && row.device_id !== deviceId) {
+    return res.json({ valid: false, message: 'المفتاح مرتبط بجهاز آخر', requires_device: true, status: row.status });
+  }
+
+  const licenseType = normalizeLicenseType(row.license_type || (row.allow_multiple_users ? 'owner_team' : 'owner_single'));
+  const isOwner = !!row.owner_user_id && !!userId && row.owner_user_id === userId;
+  const isStaffForSameShop = !!row.shop_id && !!shopId && row.shop_id === shopId && !!row.allow_staff_access && !!userId && userId !== row.owner_user_id;
+
+  if (licenseType === 'owner_single') {
+    if (row.bound_user_id && userId && row.bound_user_id !== userId) {
+      return res.json({ valid: false, message: 'هذا الترخيص مخصص لمستخدم واحد فقط على هذا الجهاز', status: row.status });
     }
-    if (row.device_id && row.device_id !== deviceId) {
-      return res.json({ valid: false, message: 'المفتاح مرتبط بجهاز آخر', requires_device: true, status: row.status });
+    if (row.owner_user_id && !!userId && !isOwner) {
+      return res.json({ valid: false, message: 'هذا الترخيص مالك فقط ولا يفتح للمستخدمين الآخرين', status: row.status });
     }
-    if (!row.allow_multiple_users && row.bound_user_id && userId && row.bound_user_id !== userId) {
-      return res.json({ valid: false, message: 'الترخيص مخصص لمستخدم واحد على هذا الجهاز', status: row.status });
+  }
+
+  if (licenseType === 'owner_team') {
+    if (!isOwner && !isStaffForSameShop) {
+      return res.json({ valid: false, message: 'هذا الترخيص مخصص لمالك المحل أو الموظفين المصرح لهم داخل نفس المحل', status: row.status });
     }
 
-    const boundUser = row.bound_user_id || userId || null;
-    db.run(
-      `UPDATE licenses SET status='used', device_id=?, bound_user_id=?, activated_at=COALESCE(activated_at, CURRENT_TIMESTAMP) WHERE id=?`,
-      [deviceId, boundUser, row.id],
-      (updateErr) => {
-        if (updateErr) return res.status(500).json({ valid: false, error: updateErr.message });
-        res.json({
-          valid: true,
-          message: 'مفتاح الترخيص صالح وتم التفعيل بنجاح',
-          status: 'used',
-          device_id: deviceId,
-          allow_multiple_users: Boolean(row.allow_multiple_users),
-        });
-      },
-    );
+    if (isStaffForSameShop) {
+      const maxSeats = Number(row.max_staff_users || 0);
+      if (maxSeats > 0) {
+        const usedSeats = await dbGet(
+          `SELECT COUNT(*) AS total FROM license_staff_users WHERE license_id = ? AND shop_id = ? AND status = 'active'`,
+          [row.id, shopId],
+        );
+        const currentTotal = Number(usedSeats?.total ?? 0);
+        const userGranted = await dbGet(
+          `SELECT 1 FROM license_staff_users WHERE license_id = ? AND user_id = ? AND shop_id = ? AND status = 'active' LIMIT 1`,
+          [row.id, userId, shopId],
+        );
+        if (currentTotal >= maxSeats && !userGranted) {
+          return res.json({ valid: false, message: 'تم الوصول إلى عدد الموظفين المصرح لهم لهذا الترخيص', status: row.status });
+        }
+        if (!userGranted) {
+          await dbRun(
+            `INSERT OR IGNORE INTO license_staff_users (id, license_id, user_id, shop_id, status, granted_at)
+             VALUES (?, ?, ?, ?, 'active', ?)`,
+            [uuidv4(), row.id, userId, shopId, new Date().toISOString()],
+          );
+        }
+      }
+    }
+  }
+
+  const boundUser = row.bound_user_id || userId || row.owner_user_id || null;
+  await dbRun(
+    `UPDATE licenses SET status='used', device_id=?, bound_user_id=?, activated_at=COALESCE(activated_at, CURRENT_TIMESTAMP) WHERE id=?`,
+    [deviceId, boundUser, row.id],
+  );
+
+  return res.json({
+    valid: true,
+    message: 'مفتاح الترخيص صالح وتم التفعيل بنجاح',
+    status: 'used',
+    device_id: deviceId,
+    license_type: licenseType,
+    allow_multiple_users: Boolean(row.allow_multiple_users || (licenseType === 'owner_team')),
+    allow_staff_access: Boolean(row.allow_staff_access),
   });
 });
 

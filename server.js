@@ -1171,8 +1171,9 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     message: 'Cloud Sync backend is running',
-    version: '2.6.0',
-    database: dbPath,
+    version: '2.7.0',
+    database_mode: dbMode,
+    database: dbMode === 'postgres' ? 'postgresql' : dbPath,
     timestamp: new Date().toISOString(),
   });
 });
@@ -1362,7 +1363,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     message: 'DrarTech Smart Accountant Backend',
-    version: '2.6.0',
+    version: '2.7.0',
     endpoints: ['/generate', '/verify', '/stats', '/sync', '/health'],
   });
 });

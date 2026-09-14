@@ -1395,8 +1395,135 @@ app.get(['/admin', '/admin/'], (req, res) => {
   return res.sendFile(dashboardFile);
 });
 
+app.get(['/admin/database', '/admin/database/'], (req, res) => {
+  const databaseDashboard = path.join(__dirname, 'public', 'admin', 'database.html');
+  if (!fs.existsSync(databaseDashboard)) {
+    return res.status(500).send('Database dashboard file is missing from the deployment.');
+  }
+  return res.sendFile(databaseDashboard);
+});
+
 app.get('/admin-check', requireAdminAuthorization, (req, res) => {
   res.json({ success: true, admin: true });
+});
+
+const adminDatabaseTables = [
+  'audit_logs', 'auth_sessions', 'customers', 'expenses', 'invoices',
+  'license_staff_users', 'licenses', 'processed_client_txns', 'products',
+  'roles', 'shops', 'suppliers', 'sync_conflicts', 'sync_queue',
+  'trial_devices', 'user_devices', 'users', 'vouchers',
+];
+
+function requireDatabaseAdmin(req, res, next) {
+  return requireAdminAuthorization(req, res, () => {
+    if (req.get('x-auth-token')) {
+      return requireAuth(req, res, () => {
+        if (req.user?.role !== 'owner') {
+          return res.status(403).json({ error: 'صلاحية المالك مطلوبة' });
+        }
+        return next();
+      });
+    }
+    return requireSyncAuthorization(req, res, next);
+  });
+}
+
+function databaseQuery(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(query, params, (error, rows) => error ? reject(error) : resolve(rows || []));
+  });
+}
+
+function databaseOne(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(query, params, (error, row) => error ? reject(error) : resolve(row || null));
+  });
+}
+
+app.get('/admin/db/stats', requireDatabaseAdmin, async (req, res) => {
+  try {
+    const tables = [];
+    for (const tableName of adminDatabaseTables) {
+      let columns = 0;
+      let rows = 0;
+      let sizeBytes = null;
+
+      if (dbMode === 'postgres') {
+        const columnRow = await databaseOne(
+          `SELECT COUNT(*)::int AS count FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = ?`,
+          [tableName],
+        );
+        const countRow = await databaseOne(`SELECT COUNT(*)::bigint AS count FROM "${tableName}"`);
+        const sizeRow = await databaseOne(
+          `SELECT pg_total_relation_size('public."${tableName}"')::bigint AS bytes`,
+        );
+        columns = Number(columnRow?.count || 0);
+        rows = Number(countRow?.count || 0);
+        sizeBytes = Number(sizeRow?.bytes || 0);
+      } else {
+        const columnRows = await databaseQuery(`PRAGMA table_info("${tableName}")`);
+        const countRow = await databaseOne(`SELECT COUNT(*) AS count FROM "${tableName}"`);
+        columns = columnRows.length;
+        rows = Number(countRow?.count || 0);
+      }
+
+      tables.push({ table: tableName, columns, rows_estimated: rows, size_bytes: sizeBytes });
+    }
+    return res.json({ database_mode: dbMode, tables });
+  } catch (error) {
+    console.error('admin database stats failed:', error.message);
+    return res.status(500).json({ error: 'تعذر قراءة إحصاءات قاعدة البيانات' });
+  }
+});
+
+app.get('/admin/db/users', requireDatabaseAdmin, async (req, res) => {
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.page_size, 10) || 25));
+  const search = String(req.query.search || '').trim();
+  const offset = (page - 1) * pageSize;
+  const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
+  const where = search ? 'WHERE users.name ILIKE ? OR shops.phone ILIKE ? OR users.id::text ILIKE ?' : '';
+  const sqliteWhere = search ? 'WHERE users.name LIKE ? OR shops.phone LIKE ? OR users.id LIKE ?' : '';
+  const queryWhere = dbMode === 'postgres' ? where : sqliteWhere;
+
+  try {
+    const countRow = await databaseOne(
+      `SELECT COUNT(*) AS count FROM users LEFT JOIN shops ON shops.id = users.shop_id ${queryWhere}`,
+      searchParams,
+    );
+    const users = await databaseQuery(
+      `SELECT users.id, users.name, shops.phone, users.role, users.shop_id,
+              users.createdAt AS createdat
+         FROM users LEFT JOIN shops ON shops.id = users.shop_id
+         ${queryWhere} ORDER BY users.createdAt DESC LIMIT ? OFFSET ?`,
+      [...searchParams, pageSize, offset],
+    );
+    return res.json({
+      page,
+      page_size: pageSize,
+      total: Number(countRow?.count || 0),
+      users,
+    });
+  } catch (error) {
+    console.error('admin database users failed:', error.message);
+    return res.status(500).json({ error: 'تعذر قراءة المستخدمين' });
+  }
+});
+
+app.get('/admin/db/shops', requireDatabaseAdmin, async (req, res) => {
+  try {
+    const shops = await databaseQuery(
+      `SELECT DISTINCT shops.id, shops.shop_code, shops.name, shops.owner_name, shops.phone
+         FROM shops LEFT JOIN users ON users.shop_id = shops.id
+        WHERE users.id IS NOT NULL OR shops.owner_id IS NOT NULL
+        ORDER BY shops.name`,
+    );
+    return res.json({ shops });
+  } catch (error) {
+    console.error('admin database shops failed:', error.message);
+    return res.status(500).json({ error: 'تعذر قراءة المحلات' });
+  }
 });
 
 async function ensureInitialOwnerSeed({ shop_id, user_code, email, device_id, pin }) {

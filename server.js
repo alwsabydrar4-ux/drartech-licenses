@@ -18,6 +18,11 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 const requestBuckets = new Map();
+let dbReady = false;
+let dbHealthError = null;
+
+console.log('DATABASE_URL exists:', Boolean(process.env.DATABASE_URL));
+console.log('NODE_ENV:', process.env.NODE_ENV || '(not set)');
 
 function toPostgresQuery(query, params = []) {
   const values = Array.isArray(params) ? [...params] : [];
@@ -41,7 +46,7 @@ function toPostgresQuery(query, params = []) {
 function createPostgresDbAdapter() {
   const pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: DATABASE_URL ? { rejectUnauthorized: false } : undefined,
+    ssl: { rejectUnauthorized: false },
   });
 
   const exec = (method, query, params, callback) => {
@@ -1150,32 +1155,35 @@ async function initializeDatabase() {
     try {
       await dbGet('SELECT 1');
       await createSchemaPostgres();
-      console.log('✅ تم الاتصال بقاعدة بيانات PostgreSQL بنجاح وتهيئتها');
+      dbReady = true;
+      dbHealthError = null;
+      console.log('PostgreSQL connected and schema initialized');
       return;
     } catch (error) {
-      console.error('❌ فشل الاتصال بقاعدة بيانات PostgreSQL:', error.message);
-      console.warn('⚠️ سيتم التبديل إلى SQLite المحلي بدلاً من PostgreSQL لتجنب توقف السيرفر.');
-      dbMode = 'sqlite';
-      db = createSqliteDbAdapter();
-      createSchemaSqlite();
-      console.log('📁 تم التشغيل باستخدام SQLite المحلي بعد فشل PostgreSQL');
+      dbReady = false;
+      dbHealthError = error.message;
+      console.error('PostgreSQL connection/schema initialization failed:', error.message);
       return;
     }
   }
 
   createSchemaSqlite();
+  dbReady = true;
+  dbHealthError = null;
   console.log('📁 تم التشغيل باستخدام SQLite المحلي');
 }
 
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  const response = {
+    status: dbReady ? 'ok' : 'error',
     message: 'Cloud Sync backend is running',
     version: '2.7.0',
-    database_mode: dbMode,
-    database: dbMode === 'postgres' ? 'postgresql' : dbPath,
+    database_mode: process.env.DATABASE_URL ? 'postgres' : 'sqlite',
+    database: process.env.DATABASE_URL ? 'postgresql' : 'data/smart_accountant.db',
     timestamp: new Date().toISOString(),
-  });
+  };
+  if (dbHealthError) response.database_error = dbHealthError;
+  return res.status(dbReady ? 200 : 503).json(response);
 });
 
 app.get('/shops/resolve', requireSyncAuthorization, (req, res) => {
@@ -1234,7 +1242,7 @@ app.get('/shops/:shopId/users', requireSyncAuthorization, (req, res) => {
   if (!shopId) return res.status(400).json({ error: 'shopId مطلوب' });
   db.all(
     `SELECT id, shop_id, user_code, email, name, role, status, createdAt, updatedAt
-       FROM users WHERE shop_id = ? ORDER BY name COLLATE NOCASE`,
+      FROM users WHERE shop_id = ? ORDER BY name`,
     [shopId],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -1312,7 +1320,7 @@ app.get('/shops/:shopId/bootstrap', requireSyncAuthorization, async (req, res) =
         db.get('SELECT * FROM shops WHERE id = ? LIMIT 1', [shopId], (err, row) => err ? reject(err) : resolve(row ? serializeRow(row) : null));
       }),
       new Promise((resolve, reject) => {
-        db.all('SELECT * FROM users WHERE shop_id = ? ORDER BY name COLLATE NOCASE', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+        db.all('SELECT * FROM users WHERE shop_id = ? ORDER BY name', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
       }),
       new Promise((resolve, reject) => {
         db.all('SELECT * FROM customers WHERE shop_id = ? ORDER BY updatedAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
@@ -1845,8 +1853,8 @@ initializeDatabase()
   .then(() => {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 سيرفر Smart Accountant يعمل على المنفذ: ${PORT}`);
-      console.log(`📁 قاعدة البيانات: ${dbPath}`);
-      console.log(`🔐 وضع قاعدة البيانات: ${dbMode}`);
+      console.log(`🔐 وضع قاعدة البيانات: ${DATABASE_URL ? 'postgres' : 'sqlite'}`);
+      console.log(`📁 قاعدة البيانات: ${DATABASE_URL ? 'postgresql' : dbPath}`);
     });
   })
   .catch((error) => {

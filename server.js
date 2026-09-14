@@ -1396,8 +1396,11 @@ app.get(['/admin', '/admin/'], (req, res) => {
 });
 
 app.get(['/admin/database', '/admin/database/'], (req, res) => {
-  const databaseDashboard = path.join(__dirname, 'public', 'admin', 'database.html');
-  if (!fs.existsSync(databaseDashboard)) {
+  const databaseDashboard = [
+    path.join(__dirname, 'public', 'admin', 'database.html'),
+    path.join(__dirname, '..', 'public', 'admin', 'database.html'),
+  ].find((file) => fs.existsSync(file));
+  if (!databaseDashboard) {
     return res.status(500).send('Database dashboard file is missing from the deployment.');
   }
   return res.sendFile(databaseDashboard);

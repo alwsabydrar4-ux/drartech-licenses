@@ -1,4 +1,5 @@
 const express = require('express');
+const dns = require('dns');
 const sqlite3 = require('sqlite3').verbose();
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
@@ -6,6 +7,8 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+
+dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -47,6 +50,8 @@ function createPostgresDbAdapter() {
   const pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+    keepAlive: true,
   });
 
   const exec = (method, query, params, callback) => {
@@ -1161,7 +1166,9 @@ async function initializeDatabase() {
       return;
     } catch (error) {
       dbReady = false;
-      dbHealthError = error.message;
+      dbHealthError = error.code === 'ENETUNREACH'
+        ? `${error.message}; Supabase direct host is IPv6-only from this network. Use the Supabase Transaction Pooler URL on port 6543.`
+        : error.message;
       console.error('PostgreSQL connection/schema initialization failed:', error.message);
       return;
     }

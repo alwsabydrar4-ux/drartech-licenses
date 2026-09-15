@@ -1,63 +1,123 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>قاعدة البيانات | DrarTech</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DrarTech - لوحة قاعدة البيانات</title>
   <style>
-    :root{--bg:#07101f;--panel:#101c2e;--panel2:#14243a;--line:#28415f;--text:#e7eef8;--muted:#91a5bd;--accent:#38bdf8;--good:#34d399;--danger:#fb7185}
-    *{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#07101f,#101a2c 55%,#15243a);color:var(--text);font-family:Tahoma,Arial,sans-serif}main{max-width:1440px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}.brand h1{margin:0;font-size:25px}.brand p{margin:7px 0 0;color:var(--muted);font-size:13px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}input,button{border:1px solid var(--line);border-radius:9px;background:#091526;color:var(--text);padding:10px 12px;font:inherit}input{min-width:260px}button{cursor:pointer;background:#0b6e9d;border-color:#159bd4;font-weight:bold}button:hover{filter:brightness(1.15)}.status{color:var(--muted);font-size:12px}.status.ok{color:var(--good)}.status.error{color:var(--danger)}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:22px}.card{background:rgba(16,28,46,.9);border:1px solid var(--line);border-radius:12px;padding:15px}.card h2{font-size:18px;margin:0 0 14px}.table-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px}.table-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:13px}.table-card strong{display:block;color:#d7f3ff;font-family:Consolas,monospace}.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:10px}.section{margin-top:20px}.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.section-head h2{margin:0}.search{min-width:280px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:right;border-bottom:1px solid var(--line);padding:11px 9px;font-size:13px}th{color:var(--muted);font-size:12px;background:#0b1728}td code{color:#c7e9ff}.scroll{overflow:auto}.pager{display:flex;justify-content:flex-start;gap:8px;align-items:center;margin-top:12px;color:var(--muted);font-size:12px}.pager button{padding:7px 11px;background:#14243a;border-color:var(--line)}.empty{padding:22px;color:var(--muted);text-align:center}@media(max-width:680px){main{padding:14px}header{align-items:stretch;flex-direction:column}.toolbar{align-items:stretch;flex-direction:column}.toolbar input,.toolbar button,.search{width:100%;min-width:0}}
+    :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--green:#22c55e;--blue:#3b82f6;--red:#ef4444;--muted:#94a3b8;--text:#f8fafc}
+    *{box-sizing:border-box}
+    body{font-family:Tahoma,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:20px}
+    main{max-width:1440px;margin:auto}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
+    h2,h3,h4{margin-top:0}.header h2{margin-bottom:6px}.subtitle{color:var(--muted);font-size:13px;margin:0}
+    .actions,.inline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .card{background:var(--card);padding:20px;border-radius:12px;border:1px solid var(--border);margin:12px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+    .table-box{background:#0f172a;padding:12px;border-radius:8px;border:1px solid var(--border)}
+    .table-box h4{margin:0 0 8px;color:var(--green);font-family:Consolas,monospace}
+    input,button{padding:10px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:var(--text);font:inherit}
+    input{min-width:220px}button{cursor:pointer;font-weight:bold}button:disabled{cursor:not-allowed;opacity:.5}button.green{background:var(--green);color:#000}button.blue{background:var(--blue);color:#fff}button.red{background:var(--red);color:#fff}
+    .badge{padding:4px 8px;border-radius:6px;font-size:12px;background:#0f172a;border:1px solid var(--border);white-space:nowrap}
+    .badge.ok{border-color:var(--green);color:var(--green)}
+    .table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px;min-width:680px}th,td{padding:9px;border-bottom:1px solid var(--border);text-align:right}th{color:var(--muted);white-space:nowrap}td code{color:#c7e9ff}
+    .empty{color:var(--muted);padding:16px;text-align:center}.log{font-size:11px;background:#000;padding:8px;border-radius:6px;max-height:140px;overflow:auto;white-space:pre-wrap;color:#cbd5e1}
+    .section-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.pager{justify-content:flex-start;margin-top:12px;color:var(--muted);font-size:12px}
+    @media (max-width:700px){body{padding:12px}.header{align-items:stretch;flex-direction:column}.card{padding:14px}.actions{width:100%}.actions input{flex:1;min-width:0}.section-title .inline{width:100%}.section-title input{flex:1;min-width:0}}
   </style>
 </head>
 <body>
 <main>
-  <header>
-    <div class="brand"><h1>قاعدة البيانات</h1><p>إدارة ومراقبة بيانات Supabase من خلال الصلاحيات الحالية</p></div>
-    <div class="toolbar"><input id="secret" type="password" autocomplete="off" placeholder="x-admin-secret"><button id="connect">اتصال آمن</button><button id="refresh">تحديث</button><span id="status" class="status">غير متصل</span></div>
+  <header class="header">
+    <div><h2>لوحة قاعدة البيانات - DrarTech v3.1.1</h2><p class="subtitle">مراقبة بيانات قاعدة البيانات من خلال الصلاحيات الحالية</p></div>
+    <div class="actions">
+      <span id="authStatus" class="badge">غير مسجل</span>
+      <input id="secret" type="password" autocomplete="off" placeholder="x-admin-secret" aria-label="مفتاح المدير">
+      <button id="loginButton" class="blue">دخول الأدمن</button>
+      <button id="logoutButton" class="red" disabled>خروج</button>
+      <button id="refreshButton" class="green" disabled>تحديث</button>
+    </div>
   </header>
-  <section class="card"><h2>الجداول</h2><div id="tableCards" class="table-grid"><div class="empty">أدخل مفتاح المدير ثم اضغط اتصال آمن</div></div></section>
-  <section class="card section"><div class="section-head"><h2>المستخدمون</h2><div class="toolbar"><input id="userSearch" class="search" placeholder="بحث بالاسم أو الهاتف أو user_id"><button id="userSearchButton">بحث</button></div></div><div class="scroll"><table><thead><tr><th>id</th><th>الاسم</th><th>الهاتف</th><th>الدور</th><th>shop_id</th><th>createdat</th></tr></thead><tbody id="users"><tr><td colspan="6" class="empty">لا توجد بيانات</td></tr></tbody></table></div><div class="pager"><button id="prev">السابق</button><span id="pageInfo">صفحة 1</span><button id="next">التالي</button></div></section>
-  <section class="card section"><div class="section-head"><h2>المحلات المرتبطة بالمستخدمين</h2></div><div class="scroll"><table><thead><tr><th>id</th><th>shop_code</th><th>name</th><th>owner_name</th><th>phone</th></tr></thead><tbody id="shops"><tr><td colspan="5" class="empty">لا توجد بيانات</td></tr></tbody></table></div></section>
+
+  <section class="card">
+    <div class="section-title"><h3>إحصائيات الجداول</h3><label><input type="checkbox" id="autoRefresh"> تحديث تلقائي كل 30 ثانية</label></div>
+    <div id="statsGrid" class="grid"><div class="empty">أدخل مفتاح المدير ثم اضغط دخول الأدمن</div></div>
+  </section>
+
+  <section class="card">
+    <div class="section-title"><h3>المستخدمون</h3><div class="inline"><input id="userSearch" placeholder="بحث بالاسم أو الهاتف أو user_id" aria-label="بحث عن مستخدم"><button id="searchButton" class="blue" disabled>بحث</button></div></div>
+    <div class="table-wrap"><table><thead><tr><th>id</th><th>الاسم</th><th>الهاتف</th><th>الدور</th><th>shop_id</th><th>createdat</th></tr></thead><tbody id="users"><tr><td colspan="6" class="empty">لا توجد بيانات</td></tr></tbody></table></div>
+    <div class="inline pager"><button id="prevButton" disabled>السابق</button><span id="pageInfo">صفحة 1</span><button id="nextButton" disabled>التالي</button></div>
+  </section>
+
+  <section class="card">
+    <h3>المحلات المرتبطة بالمستخدمين</h3>
+    <div class="table-wrap"><table><thead><tr><th>id</th><th>shop_code</th><th>name</th><th>owner_name</th><th>phone</th></tr></thead><tbody id="shops"><tr><td colspan="5" class="empty">لا توجد بيانات</td></tr></tbody></table></div>
+  </section>
+
+  <section class="card"><h3>السجل</h3><div id="log" class="log" aria-live="polite">جاهز...</div></section>
 </main>
 <script>
 (() => {
   let adminSecret = '';
   let page = 1;
+  let refreshTimer = null;
+  let requestVersion = 0;
   const pageSize = 25;
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const setStatus = (text, kind = '') => { $('status').textContent = text; $('status').className = `status ${kind}`; };
-  const api = async (path) => {
+  const log = message => { $('log').textContent = `${new Date().toLocaleTimeString('ar-EG')} - ${message}\n${$('log').textContent}`.slice(0, 5000); };
+  const setBusy = busy => { $('refreshButton').disabled = busy || !adminSecret; $('loginButton').disabled = busy; };
+  const setAuth = authenticated => { $('authStatus').textContent = authenticated ? 'مسجل في الذاكرة' : 'غير مسجل'; $('authStatus').className = `badge${authenticated ? ' ok' : ''}`; $('logoutButton').disabled = !authenticated; $('searchButton').disabled = !authenticated; $('refreshButton').disabled = !authenticated; };
+  const formatBytes = value => value == null ? 'غير متاح' : `${(Number(value) / 1024).toFixed(1)} KB`;
+  async function api(path) {
     if (!adminSecret) throw new Error('أدخل x-admin-secret أولًا');
     const response = await fetch(path, { headers: { 'x-admin-secret': adminSecret } });
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) { adminSecret = ''; setAuth(false); throw new Error('مفتاح المدير غير صحيح أو منتهي'); }
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
-  };
-  const formatBytes = value => value == null ? 'غير متاح' : `${(Number(value) / 1024).toFixed(1)} KB`;
+  }
   async function loadStats() {
     const data = await api('/admin/db/stats');
-    $('tableCards').innerHTML = data.tables.map(item => `<div class="table-card"><strong>${esc(item.table)}</strong><div class="meta"><span>الأعمدة: ${Number(item.columns || 0)}</span><span>الصفوف: ${Number(item.rows_estimated || 0)}</span></div><div class="meta"><span>الحجم التقريبي</span><span>${formatBytes(item.size_bytes)}</span></div></div>`).join('');
+    const tables = Array.isArray(data.tables) ? data.tables : [];
+    $('statsGrid').innerHTML = tables.length ? tables.map(item => `<div class="table-box"><h4>${esc(item.table ?? item.name)}</h4><div>الأعمدة: ${Number(item.columns || 0)} | الصفوف: ${Number(item.rows_estimated ?? item.rows ?? item.row_count ?? 0)}</div><div>الحجم: ${esc(item.size ?? item.size_pretty ?? formatBytes(item.size_bytes))}</div></div>`).join('') : '<div class="empty">لا توجد بيانات</div>';
+    log(`تم تحميل إحصائيات ${tables.length} جدول`);
   }
   async function loadUsers() {
     const query = new URLSearchParams({ page: String(page), page_size: String(pageSize), search: $('userSearch').value.trim() });
     const data = await api(`/admin/db/users?${query}`);
-    $('users').innerHTML = data.users.length ? data.users.map(user => `<tr><td><code>${esc(user.id)}</code></td><td>${esc(user.name)}</td><td>${esc(user.phone)}</td><td>${esc(user.role)}</td><td><code>${esc(user.shop_id)}</code></td><td>${esc(user.createdat)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">لا توجد نتائج</td></tr>';
-    $('pageInfo').textContent = `صفحة ${data.page} من ${Math.max(1, Math.ceil(Number(data.total || 0) / pageSize))}`;
-    $('prev').disabled = page <= 1; $('next').disabled = page * pageSize >= Number(data.total || 0);
+    const users = Array.isArray(data.users) ? data.users : [];
+    $('users').innerHTML = users.length ? users.map(user => `<tr><td><code>${esc(user.id)}</code></td><td>${esc(user.name)}</td><td>${esc(user.phone)}</td><td>${esc(user.role)}</td><td><code>${esc(user.shop_id)}</code></td><td>${esc(user.createdat)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">لا توجد نتائج</td></tr>';
+    const totalPages = Math.max(1, Math.ceil(Number(data.total || 0) / pageSize));
+    $('pageInfo').textContent = `صفحة ${data.page || page} من ${totalPages}`;
+    $('prevButton').disabled = page <= 1; $('nextButton').disabled = page >= totalPages;
+    log(`تم تحميل ${users.length} مستخدم`);
   }
   async function loadShops() {
     const data = await api('/admin/db/shops');
-    $('shops').innerHTML = data.shops.length ? data.shops.map(shop => `<tr><td><code>${esc(shop.id)}</code></td><td>${esc(shop.shop_code)}</td><td>${esc(shop.name)}</td><td>${esc(shop.owner_name)}</td><td>${esc(shop.phone)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">لا توجد نتائج</td></tr>';
+    const shops = Array.isArray(data.shops) ? data.shops : [];
+    $('shops').innerHTML = shops.length ? shops.map(shop => `<tr><td><code>${esc(shop.id)}</code></td><td>${esc(shop.shop_code)}</td><td>${esc(shop.name)}</td><td>${esc(shop.owner_name)}</td><td>${esc(shop.phone)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">لا توجد نتائج</td></tr>';
+    log(`تم تحميل ${shops.length} محل`);
   }
-  async function refreshAll() { try { await Promise.all([loadStats(), loadUsers(), loadShops()]); setStatus(`متصل • ${new Date().toLocaleTimeString('ar-EG')}`, 'ok'); } catch (error) { setStatus(error.message, 'error'); } }
-  $('connect').onclick = () => { adminSecret = $('secret').value.trim(); page = 1; refreshAll(); };
-  $('refresh').onclick = refreshAll;
-  $('userSearchButton').onclick = () => { page = 1; loadUsers().catch(error => setStatus(error.message, 'error')); };
-  $('userSearch').onkeydown = event => { if (event.key === 'Enter') $('userSearchButton').click(); };
-  $('prev').onclick = () => { if (page > 1) { page--; loadUsers(); } };
-  $('next').onclick = () => { page++; loadUsers(); };
-  setInterval(() => { if (adminSecret) refreshAll(); }, 30000);
+  async function loadAll() {
+    if (!adminSecret) return;
+    const currentVersion = ++requestVersion;
+    setBusy(true);
+    try { await Promise.all([loadStats(), loadUsers(), loadShops()]); if (currentVersion === requestVersion) log('اكتمل تحديث اللوحة'); }
+    catch (error) { if (currentVersion === requestVersion) { log(`خطأ: ${error.message}`); alert(error.message); } }
+    finally { setBusy(false); }
+  }
+  function configureAutoRefresh(enabled) { clearInterval(refreshTimer); refreshTimer = enabled ? setInterval(loadAll, 30000) : null; log(enabled ? 'تم تفعيل التحديث التلقائي' : 'تم إيقاف التحديث التلقائي'); }
+  $('loginButton').onclick = () => { adminSecret = $('secret').value.trim(); if (!adminSecret) return alert('أدخل مفتاح المدير أولًا'); page = 1; setAuth(true); log('تم تسجيل الدخول في الذاكرة فقط'); loadAll(); };
+  $('logoutButton').onclick = () => { adminSecret = ''; $('secret').value = ''; clearInterval(refreshTimer); refreshTimer = null; setAuth(false); log('تم تسجيل الخروج'); };
+  $('refreshButton').onclick = loadAll;
+  $('searchButton').onclick = () => { page = 1; loadUsers().catch(error => { log(`خطأ: ${error.message}`); alert(error.message); }); };
+  $('userSearch').onkeydown = event => { if (event.key === 'Enter' && !$('searchButton').disabled) $('searchButton').click(); };
+  $('prevButton').onclick = () => { if (page > 1) { page--; loadUsers().catch(error => alert(error.message)); } };
+  $('nextButton').onclick = () => { page++; loadUsers().catch(error => alert(error.message)); };
+  $('autoRefresh').onchange = event => configureAutoRefresh(event.target.checked);
+  setAuth(false);
 })();
 </script>
 </body>

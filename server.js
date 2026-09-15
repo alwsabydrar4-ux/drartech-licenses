@@ -1485,9 +1485,9 @@ app.get('/admin/db/users', requireDatabaseAdmin, async (req, res) => {
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.page_size, 10) || 25));
   const search = String(req.query.search || '').trim();
   const offset = (page - 1) * pageSize;
-  const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
-  const where = search ? 'WHERE users.name ILIKE ? OR shops.phone ILIKE ? OR users.id::text ILIKE ?' : '';
-  const sqliteWhere = search ? 'WHERE users.name LIKE ? OR shops.phone LIKE ? OR users.id LIKE ?' : '';
+  const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`] : [];
+  const where = search ? 'WHERE users.name ILIKE ? OR shops.phone ILIKE ? OR users.email ILIKE ? OR users.user_code ILIKE ? OR users.user_id::text ILIKE ?' : '';
+  const sqliteWhere = search ? 'WHERE users.name LIKE ? OR shops.phone LIKE ? OR users.email LIKE ? OR users.user_code LIKE ? OR users.user_id LIKE ?' : '';
   const queryWhere = dbMode === 'postgres' ? where : sqliteWhere;
 
   try {
@@ -1496,17 +1496,30 @@ app.get('/admin/db/users', requireDatabaseAdmin, async (req, res) => {
       searchParams,
     );
     const users = await databaseQuery(
-      `SELECT users.id, users.name, shops.phone, users.role, users.shop_id,
-              users.createdAt AS createdat
+      `SELECT users.*, shops.phone AS shop_phone
          FROM users LEFT JOIN shops ON shops.id = users.shop_id
          ${queryWhere} ORDER BY users.createdAt DESC LIMIT ? OFFSET ?`,
       [...searchParams, pageSize, offset],
     );
+    const safeUsers = users.map((user) => {
+      const { pin_hash, pin_salt, password_hash, password, ...rest } = user;
+      return {
+        id: rest.id || '',
+        name: rest.name || '',
+        email: rest.email || '',
+        phone: rest.shop_phone || rest.phone || '',
+        user_number: rest.user_number || rest.number || rest.user_code || rest.code || '',
+        role: rest.role || '',
+        shop_id: rest.shop_id || '',
+        user_id: rest.user_id || rest.id || '',
+        createdat: rest.createdat || rest.created_at || rest.createdAt || '',
+      };
+    });
     return res.json({
       page,
       page_size: pageSize,
       total: Number(countRow?.count || 0),
-      users,
+      users: safeUsers,
     });
   } catch (error) {
     console.error('admin database users failed:', error.message);

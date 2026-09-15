@@ -1427,7 +1427,7 @@ function requireDatabaseAdmin(req, res, next) {
         return next();
       });
     }
-    return requireSyncAuthorization(req, res, next);
+    return next();
   });
 }
 

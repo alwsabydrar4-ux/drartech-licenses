@@ -46,7 +46,7 @@
 
   <section class="card">
     <div class="section-title"><h3>المستخدمون</h3><div class="inline"><input id="userSearch" placeholder="بحث بالاسم أو الهاتف أو user_id" aria-label="بحث عن مستخدم"><button id="searchButton" class="blue" disabled>بحث</button></div></div>
-    <div class="table-wrap"><table><thead><tr><th>id</th><th>الاسم</th><th>الهاتف</th><th>الدور</th><th>shop_id</th><th>createdat</th></tr></thead><tbody id="users"><tr><td colspan="6" class="empty">لا توجد بيانات</td></tr></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>id</th><th>الاسم</th><th>الهاتف</th><th>الدور</th><th>shop_id</th><th>createdat</th></tr></thead><tbody id="users"><tr><td colspan="7" class="empty">لا توجد بيانات</td></tr></tbody></table></div>
     <div class="inline pager"><button id="prevButton" disabled>السابق</button><span id="pageInfo">صفحة 1</span><button id="nextButton" disabled>التالي</button></div>
   </section>
 
@@ -88,7 +88,7 @@
     const query = new URLSearchParams({ page: String(page), page_size: String(pageSize), search: $('userSearch').value.trim() });
     const data = await api(`/admin/db/users?${query}`);
     const users = Array.isArray(data.users) ? data.users : [];
-    $('users').innerHTML = users.length ? users.map(user => `<tr><td><code>${esc(user.id)}</code></td><td>${esc(user.name)}</td><td>${esc(user.phone)}</td><td>${esc(user.role)}</td><td><code>${esc(user.shop_id)}</code></td><td>${esc(user.createdat)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">لا توجد نتائج</td></tr>';
+    $('users').innerHTML = users.length ? users.map((user, index) => `<tr><td>${((page - 1) * pageSize) + index + 1}</td><td><code>${esc(user.id)}</code></td><td>${esc(user.name)}</td><td>${esc(user.phone)}</td><td>${esc(user.role)}</td><td><code>${esc(user.shop_id)}</code></td><td>${esc(user.createdat)}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">لا توجد نتائج</td></tr>';
     const totalPages = Math.max(1, Math.ceil(Number(data.total || 0) / pageSize));
     $('pageInfo').textContent = `صفحة ${data.page || page} من ${totalPages}`;
     $('prevButton').disabled = page <= 1; $('nextButton').disabled = page >= totalPages;

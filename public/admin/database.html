@@ -1,1 +1,64 @@
-
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>قاعدة البيانات | DrarTech</title>
+  <style>
+    :root{--bg:#07101f;--panel:#101c2e;--panel2:#14243a;--line:#28415f;--text:#e7eef8;--muted:#91a5bd;--accent:#38bdf8;--good:#34d399;--danger:#fb7185}
+    *{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#07101f,#101a2c 55%,#15243a);color:var(--text);font-family:Tahoma,Arial,sans-serif}main{max-width:1440px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}.brand h1{margin:0;font-size:25px}.brand p{margin:7px 0 0;color:var(--muted);font-size:13px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}input,button{border:1px solid var(--line);border-radius:9px;background:#091526;color:var(--text);padding:10px 12px;font:inherit}input{min-width:260px}button{cursor:pointer;background:#0b6e9d;border-color:#159bd4;font-weight:bold}button:hover{filter:brightness(1.15)}.status{color:var(--muted);font-size:12px}.status.ok{color:var(--good)}.status.error{color:var(--danger)}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:22px}.card{background:rgba(16,28,46,.9);border:1px solid var(--line);border-radius:12px;padding:15px}.card h2{font-size:18px;margin:0 0 14px}.table-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px}.table-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:13px}.table-card strong{display:block;color:#d7f3ff;font-family:Consolas,monospace}.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:10px}.section{margin-top:20px}.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.section-head h2{margin:0}.search{min-width:280px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:right;border-bottom:1px solid var(--line);padding:11px 9px;font-size:13px}th{color:var(--muted);font-size:12px;background:#0b1728}td code{color:#c7e9ff}.scroll{overflow:auto}.pager{display:flex;justify-content:flex-start;gap:8px;align-items:center;margin-top:12px;color:var(--muted);font-size:12px}.pager button{padding:7px 11px;background:#14243a;border-color:var(--line)}.empty{padding:22px;color:var(--muted);text-align:center}@media(max-width:680px){main{padding:14px}header{align-items:stretch;flex-direction:column}.toolbar{align-items:stretch;flex-direction:column}.toolbar input,.toolbar button,.search{width:100%;min-width:0}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand"><h1>قاعدة البيانات</h1><p>إدارة ومراقبة بيانات Supabase من خلال الصلاحيات الحالية</p></div>
+    <div class="toolbar"><input id="secret" type="password" autocomplete="off" placeholder="x-admin-secret"><button id="connect">اتصال آمن</button><button id="refresh">تحديث</button><span id="status" class="status">غير متصل</span></div>
+  </header>
+  <section class="card"><h2>الجداول</h2><div id="tableCards" class="table-grid"><div class="empty">أدخل مفتاح المدير ثم اضغط اتصال آمن</div></div></section>
+  <section class="card section"><div class="section-head"><h2>المستخدمون</h2><div class="toolbar"><input id="userSearch" class="search" placeholder="بحث بالاسم أو الهاتف أو user_id"><button id="userSearchButton">بحث</button></div></div><div class="scroll"><table><thead><tr><th>id</th><th>الاسم</th><th>الهاتف</th><th>الدور</th><th>shop_id</th><th>createdat</th></tr></thead><tbody id="users"><tr><td colspan="6" class="empty">لا توجد بيانات</td></tr></tbody></table></div><div class="pager"><button id="prev">السابق</button><span id="pageInfo">صفحة 1</span><button id="next">التالي</button></div></section>
+  <section class="card section"><div class="section-head"><h2>المحلات المرتبطة بالمستخدمين</h2></div><div class="scroll"><table><thead><tr><th>id</th><th>shop_code</th><th>name</th><th>owner_name</th><th>phone</th></tr></thead><tbody id="shops"><tr><td colspan="5" class="empty">لا توجد بيانات</td></tr></tbody></table></div></section>
+</main>
+<script>
+(() => {
+  let adminSecret = '';
+  let page = 1;
+  const pageSize = 25;
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const setStatus = (text, kind = '') => { $('status').textContent = text; $('status').className = `status ${kind}`; };
+  const api = async (path) => {
+    if (!adminSecret) throw new Error('أدخل x-admin-secret أولًا');
+    const response = await fetch(path, { headers: { 'x-admin-secret': adminSecret } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  };
+  const formatBytes = value => value == null ? 'غير متاح' : `${(Number(value) / 1024).toFixed(1)} KB`;
+  async function loadStats() {
+    const data = await api('/admin/db/stats');
+    $('tableCards').innerHTML = data.tables.map(item => `<div class="table-card"><strong>${esc(item.table)}</strong><div class="meta"><span>الأعمدة: ${Number(item.columns || 0)}</span><span>الصفوف: ${Number(item.rows_estimated || 0)}</span></div><div class="meta"><span>الحجم التقريبي</span><span>${formatBytes(item.size_bytes)}</span></div></div>`).join('');
+  }
+  async function loadUsers() {
+    const query = new URLSearchParams({ page: String(page), page_size: String(pageSize), search: $('userSearch').value.trim() });
+    const data = await api(`/admin/db/users?${query}`);
+    $('users').innerHTML = data.users.length ? data.users.map(user => `<tr><td><code>${esc(user.id)}</code></td><td>${esc(user.name)}</td><td>${esc(user.phone)}</td><td>${esc(user.role)}</td><td><code>${esc(user.shop_id)}</code></td><td>${esc(user.createdat)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">لا توجد نتائج</td></tr>';
+    $('pageInfo').textContent = `صفحة ${data.page} من ${Math.max(1, Math.ceil(Number(data.total || 0) / pageSize))}`;
+    $('prev').disabled = page <= 1; $('next').disabled = page * pageSize >= Number(data.total || 0);
+  }
+  async function loadShops() {
+    const data = await api('/admin/db/shops');
+    $('shops').innerHTML = data.shops.length ? data.shops.map(shop => `<tr><td><code>${esc(shop.id)}</code></td><td>${esc(shop.shop_code)}</td><td>${esc(shop.name)}</td><td>${esc(shop.owner_name)}</td><td>${esc(shop.phone)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">لا توجد نتائج</td></tr>';
+  }
+  async function refreshAll() { try { await Promise.all([loadStats(), loadUsers(), loadShops()]); setStatus(`متصل • ${new Date().toLocaleTimeString('ar-EG')}`, 'ok'); } catch (error) { setStatus(error.message, 'error'); } }
+  $('connect').onclick = () => { adminSecret = $('secret').value.trim(); page = 1; refreshAll(); };
+  $('refresh').onclick = refreshAll;
+  $('userSearchButton').onclick = () => { page = 1; loadUsers().catch(error => setStatus(error.message, 'error')); };
+  $('userSearch').onkeydown = event => { if (event.key === 'Enter') $('userSearchButton').click(); };
+  $('prev').onclick = () => { if (page > 1) { page--; loadUsers(); } };
+  $('next').onclick = () => { page++; loadUsers(); };
+  setInterval(() => { if (adminSecret) refreshAll(); }, 30000);
+})();
+</script>
+</body>
+</html>

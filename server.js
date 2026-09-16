@@ -387,6 +387,8 @@ const tableColumns = {
   shops: ['id', 'shop_code', 'name', 'owner_id', 'owner_name', 'phone', 'currency', 'country', 'createdAt', 'updatedAt', 'device_id', 'shop_id', 'user_id'],
   users: ['id', 'shop_id', 'user_code', 'email', 'name', 'role', 'status', 'createdAt', 'updatedAt', 'device_id', 'user_id'],
   audit_logs: ['id', 'device_id', 'shop_id', 'user_id', 'entity', 'entity_id', 'action', 'details', 'createdAt'],
+  stock_movements: ['id', 'device_id', 'shop_id', 'user_id', 'productId', 'type', 'quantity', 'quantityBefore', 'quantityAfter', 'reason', 'referenceId', 'createdAt'],
+  account_ledger: ['id', 'device_id', 'shop_id', 'user_id', 'customerName', 'amount', 'type', 'date', 'details', 'invoiceNumber', 'invoiceId', 'receiptNumber', 'source', 'currency'],
 };
 
 function normalizeTableRecord(tableName, record, deviceId, shopId, userId) {
@@ -578,6 +580,10 @@ function fetchTable(tableName, shopId, deviceId, lastSync) {
       let changedSince = '(updatedAt > ? OR createdAt > ?)';
       if (tableName === 'audit_logs') {
         changedSince = 'createdAt > ?';
+      } else if (tableName === 'stock_movements') {
+        changedSince = 'createdAt > ?';
+      } else if (tableName === 'account_ledger') {
+        changedSince = 'date > ?';
       } else if ([
         'customers',
         'suppliers',
@@ -589,7 +595,7 @@ function fetchTable(tableName, shopId, deviceId, lastSync) {
         changedSince = '(updatedAt > ? OR createdAt > ? OR deletedAt > ?)';
       }
       query += query.includes(' WHERE ') ? ` AND ${changedSince}` : ` WHERE ${changedSince}`;
-      if (tableName === 'audit_logs') {
+      if (['audit_logs', 'stock_movements', 'account_ledger'].includes(tableName)) {
         params.push(lastSync);
       } else if ([
         'customers',
@@ -865,6 +871,17 @@ function createSchemaSqlite() {
       details TEXT,
       createdAt DATETIME
     )`);
+    db.run(`CREATE TABLE IF NOT EXISTS stock_movements (
+      id TEXT PRIMARY KEY, device_id TEXT, shop_id TEXT, user_id TEXT,
+      productId TEXT, type TEXT, quantity REAL, quantityBefore REAL,
+      quantityAfter REAL, reason TEXT, referenceId TEXT, createdAt DATETIME
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS account_ledger (
+      id TEXT PRIMARY KEY, device_id TEXT, shop_id TEXT, user_id TEXT,
+      customerName TEXT, amount REAL, type TEXT, date DATETIME, details TEXT,
+      invoiceNumber TEXT, invoiceId TEXT, receiptNumber TEXT, source TEXT,
+      currency TEXT
+    )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS sync_conflicts (
       id TEXT PRIMARY KEY,
@@ -1104,6 +1121,18 @@ async function createSchemaPostgres() {
       details JSONB,
       createdAt TIMESTAMPTZ
     )`,
+    `CREATE TABLE IF NOT EXISTS stock_movements (
+      id TEXT PRIMARY KEY, device_id TEXT, shop_id TEXT, user_id TEXT,
+      productId TEXT, type TEXT, quantity DOUBLE PRECISION,
+      quantityBefore DOUBLE PRECISION, quantityAfter DOUBLE PRECISION,
+      reason TEXT, referenceId TEXT, createdAt TIMESTAMPTZ
+    )`,
+    `CREATE TABLE IF NOT EXISTS account_ledger (
+      id TEXT PRIMARY KEY, device_id TEXT, shop_id TEXT, user_id TEXT,
+      customerName TEXT, amount DOUBLE PRECISION, type TEXT, date TIMESTAMPTZ,
+      details TEXT, invoiceNumber TEXT, invoiceId TEXT, receiptNumber TEXT,
+      source TEXT, currency TEXT
+    )`,
     `CREATE TABLE IF NOT EXISTS sync_conflicts (
       id TEXT PRIMARY KEY,
       table_name TEXT NOT NULL,
@@ -1296,6 +1325,8 @@ app.get('/shops/:shopId/sync', requireSyncAuthorization, async (req, res) => {
       'users',
       'roles',
       'audit_logs',
+      'stock_movements',
+      'account_ledger',
     ];
 
     const data = {};
@@ -1322,7 +1353,7 @@ app.get('/shops/:shopId/bootstrap', requireSyncAuthorization, async (req, res) =
   }
 
   try {
-    const [shop, users, customers, suppliers, products, invoices, expenses, vouchers, roles, auditLogs] = await Promise.all([
+    const [shop, users, customers, suppliers, products, invoices, expenses, vouchers, roles, auditLogs, stockMovements, accountLedger] = await Promise.all([
       new Promise((resolve, reject) => {
         db.get('SELECT * FROM shops WHERE id = ? LIMIT 1', [shopId], (err, row) => err ? reject(err) : resolve(row ? serializeRow(row) : null));
       }),
@@ -1353,6 +1384,12 @@ app.get('/shops/:shopId/bootstrap', requireSyncAuthorization, async (req, res) =
       new Promise((resolve, reject) => {
         db.all('SELECT * FROM audit_logs WHERE shop_id = ? ORDER BY createdAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
       }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM stock_movements WHERE shop_id = ? ORDER BY createdAt DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
+      new Promise((resolve, reject) => {
+        db.all('SELECT * FROM account_ledger WHERE shop_id = ? ORDER BY date DESC', [shopId], (err, rows) => err ? reject(err) : resolve((rows || []).map((row) => serializeRow(row))));
+      }),
     ]);
 
     res.json({
@@ -1367,6 +1404,8 @@ app.get('/shops/:shopId/bootstrap', requireSyncAuthorization, async (req, res) =
       vouchers,
       roles,
       audit_logs: auditLogs,
+      stock_movements: stockMovements,
+      account_ledger: accountLedger,
     });
   } catch (error) {
     console.error('bootstrap failed:', error);
@@ -1934,6 +1973,8 @@ app.post('/sync', requireSyncAuthorization, async (req, res) => {
       'users',
       'roles',
       'audit_logs',
+      'stock_movements',
+      'account_ledger',
     ];
 
     const conflicts = [];

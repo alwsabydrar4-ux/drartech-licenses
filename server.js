@@ -307,6 +307,56 @@ function dbAll(query, params = []) {
 }
 
 function dbRun(query, params = []) {
+
+  async function registerUserDevice({ userId, deviceId, shopId }) {
+    const now = new Date().toISOString();
+    if (dbMode !== 'postgres') {
+      await dbRun(
+        `INSERT OR REPLACE INTO user_devices (id, user_id, device_id, shop_id, last_seen, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), userId, deviceId, shopId, now, now],
+      );
+      return;
+    }
+
+    const columns = await dbAll(
+      `SELECT column_name, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'user_devices'
+        ORDER BY ordinal_position`,
+    );
+    const available = new Map(columns.map((column) => [column.column_name, column]));
+    const insertColumns = [];
+    const values = [];
+    const add = (column, value) => {
+      if (!available.has(column)) return;
+      insertColumns.push(`"${column}"`);
+      values.push(value);
+    };
+
+    add('id', uuidv4());
+    add('user_id', userId);
+    add('device_id', deviceId);
+    add('shop_id', shopId);
+    add('last_seen', now);
+    add('created_at', now);
+    add('updated_at', now);
+    add('createdAt', now);
+    add('updatedAt', now);
+
+    if (!available.has('user_id') || !available.has('device_id')) {
+      throw new Error('user_devices schema must contain user_id and device_id');
+    }
+
+    const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
+    const conflictColumns = '"user_id", "device_id"';
+    await dbRun(
+      `INSERT INTO user_devices (${insertColumns.join(', ')})
+       VALUES (${placeholders})
+       ON CONFLICT (${conflictColumns}) DO NOTHING`,
+      values,
+    );
+  }
   return new Promise((resolve, reject) => {
     db.run(query, params, function (err) {
       if (err) return reject(err);
@@ -1682,20 +1732,14 @@ app.post('/auth/login', requireSyncAuthorization, async (req, res) => {
       [sessionId, token, user.id, user.shop_id || normalizedShopId, normalizedDeviceId, user.role, new Date().toISOString(), expiresAt],
     );
 
-    if (dbMode === 'postgres') {
-      await dbRun(
-        `INSERT INTO user_devices (user_id, device_id)
-         VALUES (?, ?)
-         ON CONFLICT (user_id, device_id) DO NOTHING`,
-        [user.id, normalizedDeviceId],
-      );
-    } else {
-      const deviceSeenAt = new Date().toISOString();
-      await dbRun(
-        `INSERT OR REPLACE INTO user_devices (id, user_id, device_id, shop_id, last_seen, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [uuidv4(), user.id, normalizedDeviceId, normalizedShopId, deviceSeenAt, deviceSeenAt],
-      );
+    try {
+      await registerUserDevice({
+        userId: user.id,
+        deviceId: normalizedDeviceId,
+        shopId: normalizedShopId,
+      });
+    } catch (deviceError) {
+      console.error('user device registration skipped:', deviceError.message);
     }
 
     return res.json({

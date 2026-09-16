@@ -1682,16 +1682,15 @@ app.post('/auth/login', requireSyncAuthorization, async (req, res) => {
       [sessionId, token, user.id, user.shop_id || normalizedShopId, normalizedDeviceId, user.role, new Date().toISOString(), expiresAt],
     );
 
-    const deviceSeenAt = new Date().toISOString();
     if (dbMode === 'postgres') {
       await dbRun(
-        `INSERT INTO user_devices (user_id, device_id, last_seen, created_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (user_id, device_id) DO UPDATE
-         SET last_seen = EXCLUDED.last_seen`,
-        [user.id, normalizedDeviceId, deviceSeenAt, deviceSeenAt],
+        `INSERT INTO user_devices (user_id, device_id)
+         VALUES (?, ?)
+         ON CONFLICT (user_id, device_id) DO NOTHING`,
+        [user.id, normalizedDeviceId],
       );
     } else {
+      const deviceSeenAt = new Date().toISOString();
       await dbRun(
         `INSERT OR REPLACE INTO user_devices (id, user_id, device_id, shop_id, last_seen, createdAt)
          VALUES (?, ?, ?, ?, ?, ?)`,

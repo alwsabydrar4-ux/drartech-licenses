@@ -16,6 +16,7 @@ async function startServer() {
       DB_PATH: join(directory, 'licenses.db'),
       NODE_ENV: 'production',
       ADMIN_SECRET: 'test-admin-secret',
+      SYNC_API_KEY: 'test-sync-api-key',
     },
     stdio: 'ignore',
   });
@@ -165,6 +166,38 @@ test('owner team licenses allow the owner and approved staff users on the same s
     assert.equal(ownerAccess.data.valid, true, JSON.stringify(ownerAccess.data));
     assert.equal(staffAccess.data.valid, true, JSON.stringify(staffAccess.data));
     assert.equal(extraStaff.data.valid, true, JSON.stringify(extraStaff.data));
+  } finally {
+    await stopServer(server);
+  }
+});
+
+test('repeated login on the same device upserts user_devices', { concurrency: false }, async () => {
+  const server = await startServer();
+  try {
+    const login = {
+      shop_id: 'repeat-login-shop',
+      user_code: '35809107',
+      email: 'owner@repeat-login.test',
+      device_id: 'repeat-login-device',
+    };
+    const headers = {
+      'content-type': 'application/json',
+      'x-sync-api-key': 'test-sync-api-key',
+    };
+    const first = await request(server, '/auth/login', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(login),
+    });
+    const second = await request(server, '/auth/login', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(login),
+    });
+
+    assert.equal(first.status, 200, JSON.stringify(first.data));
+    assert.equal(second.status, 200, JSON.stringify(second.data));
+    assert.ok(second.data.token);
   } finally {
     await stopServer(server);
   }

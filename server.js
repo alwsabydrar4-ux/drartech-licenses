@@ -981,12 +981,12 @@ async function createSchemaPostgres() {
       revokedAt TIMESTAMPTZ
     )`,
     `CREATE TABLE IF NOT EXISTS user_devices (
-      id TEXT PRIMARY KEY,
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id TEXT NOT NULL,
       device_id TEXT NOT NULL,
-      shop_id TEXT NOT NULL,
       last_seen TIMESTAMPTZ,
-      createdAt TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(user_id, device_id)
     )`,
     `CREATE TABLE IF NOT EXISTS roles (
@@ -1685,11 +1685,11 @@ app.post('/auth/login', requireSyncAuthorization, async (req, res) => {
     const deviceSeenAt = new Date().toISOString();
     if (dbMode === 'postgres') {
       await dbRun(
-        `INSERT INTO user_devices (id, user_id, device_id, shop_id, last_seen, "createdAt")
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO user_devices (user_id, device_id, last_seen, created_at)
+         VALUES (?, ?, ?, ?)
          ON CONFLICT (user_id, device_id) DO UPDATE
-         SET last_seen = NOW(), shop_id = EXCLUDED.shop_id`,
-        [uuidv4(), user.id, normalizedDeviceId, normalizedShopId, deviceSeenAt, deviceSeenAt],
+         SET last_seen = EXCLUDED.last_seen`,
+        [user.id, normalizedDeviceId, deviceSeenAt, deviceSeenAt],
       );
     } else {
       await dbRun(
